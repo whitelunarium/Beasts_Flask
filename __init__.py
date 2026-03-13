@@ -40,6 +40,7 @@ cors = CORS(
        'http://localhost:4000',
        'http://127.0.0.1:4000',
        'https://open-coding-society.github.io',
+       'https://whitelunarium.github.io',
        'https://pages.opencodingsociety.com',
    ],
    methods=["GET", "POST", "PUT", "OPTIONS"]
@@ -144,4 +145,3 @@ app.config['KASM_API_KEY_SECRET'] = os.environ.get('KASM_API_KEY_SECRET') or Non
 # GROQ API settings
 app.config['GROQ_SERVER'] = os.environ.get('GROQ_SERVER') or 'https://api.groq.com/openai/v1/chat/completions'
 app.config['GROQ_API_KEY'] = os.environ.get('GROQ_API_KEY') or None
-
