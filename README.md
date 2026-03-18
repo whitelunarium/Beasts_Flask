@@ -1,265 +1,146 @@
-# README
+# PNEC Backend — Flask REST API
 
-> This is a project to support AP Computer Science Principles (APCSP) as well as a UC articulated Data Structures course. It was crafted iteratively starting in 2020 to the present time.  The primary purposes are ...
+Python Flask API server for the Poway Neighborhood Emergency Corps website. Provides all data endpoints consumed by the Jekyll frontend.
 
-- Used as starter code for student projects for `AP CSP 1 and 2` and `Data Structures 1` curriculum.
-- Used to teach key principles in learning the Python Flask programming environment.
-- Used as a backend server to service API's in a frontend-to-backend pipeline. Review the `api` folder in the project for endpoints.
-- Contains a minimal frontend, mostly to support Administrative functionality using the `templates` folder and `Jinja2` to define UIs.
-- Contains SQL database code in the `model` folder to introduce concepts of persistent data and storage.  Perisistence folder is `instance/volumes` for generated SQLite3 db.
-- Contains capabilities for deployment and has been used with AWS, Ubuntu, Docker, docker-compose, and Nginx to `deploy a WSGI server`.
-- Contains APIs to support `user authentication and cookies`, a great deal of which was contributed by Aiden Wu a former student in CSP.  
+## Setup
 
-## Flask Portfolio Starter
-
-Use this project to create a Flask Server.
-
-- GitHub link: [flask](https://github.com/open-coding-society/flask), runtime link is published under the About on this same page.
-- `Use this as template` option is availble if you plan on making your instance of the repository.
-- `Fork` the repository if you plan to contribute though GitHub PRs.
-
-## The conventional way to get started
-
-> Quick steps that can be used with MacOS, WSL Ubuntu, or Ubuntu; this uses Python 3.9 or later as a prerequisite.
-
-- Open a Terminal, clone a project and `cd` into the project directory.  Use a `different link` and name for `name` for clone to match your repo.
+**Prerequisites:** Python 3.9+
 
 ```bash
-mkdir -p ~/openccs; cd ~/opencs
-
-git clone https://github.com/open-coding-ocietyflask.git
-
-cd flask
-```
-
-- Install python dependencies for Flask, etc.
-
-```bash
-python -m venv venv
-source venv/bin/activate
+cd BB_Flask2
+python3 -m venv venv
+source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt
 ```
 
-### Open project in VSCode
+### Environment Variables
 
-- Prepare VSCode and run
-  - From Terminal run VSCode
+Copy `.env.example` to `.env` (or set in your shell):
 
-  ```bash
-  code .
-  ```
+```bash
+FLASK_ENV=development
+SECRET_KEY=your-secret-key-here
+DATABASE_URL=sqlite:///instance/pnec.db   # or mysql+pymysql://user:pass@host/db for prod
 
-  - Open Setting: Ctrl-Shift P or Cmd-Shift
-    - Search Python: Select Interpreter.
-    - Match interpreter to `which python` from terminal.
-    - Shourd be ./venv/bin/python
+# Admin account seeded on first run
+ADMIN_EMAIL=admin@powaynec.com
+ADMIN_PASSWORD=change-me-in-production
+ADMIN_DISPLAY_NAME=PNEC Admin
 
-  - From Extensions Marketplace install `SQLite3 Editor`
-    - Open and view SQL database file `instance/volumes/user_management.db`
+# Mail (leave blank to log emails to console in dev)
+MAIL_SERVER=
+MAIL_PORT=587
+MAIL_USERNAME=
+MAIL_PASSWORD=
+```
 
-  - Make a local `.env` file in root of project to contain your secret passwords
+### Run
 
-  ```shell
-  # Port configuration
-  # FLASK_PORT=8001
-  # Admin user reset password 
-  DEFAULT_PASSWORD='123Qwerty!'
-  DEFAULT_PFP='default.png'
-  # Admin user defaults
-  ADMIN_USER='Thomas Edison'
-  ADMIN_UID='toby'
-  ADMIN_PASSWORD='123Toby!'
-  ADMIN_PFP='toby.png'
-  # Teacher user defaults
-  TEACHER_USER='Nikola Tesla'
-  TEACHER_UID='niko'
-  TEACHER_PASSWORD='123Niko!'
-  TEACHER_PFP='niko.png'
-  # Default user for testing 
-  USER_NAME='Grace Hopper'
-  USER_UID='hop'
-  USER_PASSWORD='123Hop!'
-  USER_PFP='hop.png'
-  # Convience user defaults
-  MY_NAME='John Mortensen'
-  MY_UID='jm1021'
-  MY_ROLE='admin'
-  # Obtain key, [Google AI Studio](https://aistudio.google.com/api-keys)
-  GEMINI_API_KEY=xxxxx
-  GEMINI_SERVER=https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent
-  # Obtain key, [Groq Console](https://console.groq.com/keys)
-  GROQ_API_KEY=xxxxx
-  GROQ_SERVER=https://api.groq.com/openai/v1/chat/completions
-  # GitHub Configuation
-  GITHUB_TOKEN=ghp_xxx
-  GITHUB_TARGET_TYPE=user  # Use 'organization' or 'user'
-  GITHUB_TARGET_NAME=Open-Coding-Society
-  # KASM Configuration (server is defaulted)
-  KASM_SERVER=https://kasm.opencodingsociety.com
-  KASM_API_KEY_SECRET=xxxx
-  KASM_API_KEY=xxx
-  # DB Configuration, AWS RDS
-  IS_PRODUCTION=false # false = LOCAL true = DEPLOYED
-  DB_USERNAME='admin'
-  DB_PASSWORD='xxxxx'
-  ```
+```bash
+source venv/bin/activate
+flask run --port 8587
+```
 
-  - Make the database and init data.
-  
-  ```bash
-  ./scripts/db_init.py
-  ```
+API available at `http://localhost:8587`. Frontend expects port 8587 (set in `assets/js/utils/errors.js`).
 
-  - Explore newly created SQL database
-    - Navigate too instance/volumes
-    - View/open `user_management.db`
-    - Loook at `users` table in viewer
+### Database
 
-  - Run the Project
-    - Select/open `main.py` in VSCode
-    - Start with Play button
-      - Play button sub option contains Debug
-    - Click on localhost:8087 in terminal to launch
-      - Output window will contain page to launch http://localhost:8587
-    - Login using your secrets from env
+SQLite database is created automatically on first run at `instance/pnec.db`. On first run, the app also seeds:
+- 8 FAQ categories with 30 preparedness Q&A items
+- Neighborhood data (60+ Poway neighborhoods)
+- Admin account from env variables
 
-  - Basic API test
-    - [Jokes](http://localhost:8587/api/jokes/)
+To reset and re-seed:
+```bash
+rm instance/pnec.db
+flask run --port 8587
+```
 
-### User Operations
-| Purpose | Correct Endpoint | What It Does |
-|---------|-----------------|--------------|
-| **Login** | `/api/authenticate` | Authenticates user & sets cookie |
-| **Get User** | `/api/id` | Gets current logged-in user |
-| **Signup** | `/api/user` | Creates new user account |
-| **Posts** | `/api/post/all` | Gets all social media posts |
-| **Create Post** | `/api/post` | Creates a new post |
-| **Gemini AI** | `/api/gemini` | Chat with AI assistant |
+## Directory Structure
 
-### MicroBlog Operations
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/microblog` | Create new post |
-| GET | `/api/microblog` | Get posts (with filters) |
-| PUT | `/api/microblog` | Update post |
-| DELETE | `/api/microblog` | Delete post |
+```
+app/
+  __init__.py              # Application factory — create_app(), blueprint registration, seeding
+  config.py                # Dev/prod configuration from environment variables
+  models/
+    user.py                # User model (roles: resident/coordinator/staff/admin)
+    faq.py                 # FaqCategory, FaqItem, UserQuestion
+    event.py               # Event model
+    media.py               # MediaPost model
+    neighborhood.py        # Neighborhood model
+    game.py                # GameScore model
+  routes/
+    auth.py                # /api/auth — login, register, logout, me
+    faq.py                 # /api/faq — categories, items, search, helpful, questions
+    events.py              # /api/events — list, calendar, create
+    media.py               # /api/media — list, upload
+    neighborhoods.py       # /api/neighborhoods — list, detail
+    risk.py                # /api/risk — live hazard assessment
+    game.py                # /api/game — questions, scores
+    admin.py               # /api/admin — user management
+  services/
+    auth_service.py        # Auth business logic (register, login, session)
+    faq_service.py         # FAQ CRUD + seed_faq()
+    events_service.py      # Events CRUD + get_events_for_month()
+    media_service.py       # Media upload handling
+    neighborhood_service.py # Neighborhood data + seed_neighborhoods()
+    risk_service.py        # Weather-based risk scoring (Open-Meteo API, no key needed)
+    game_service.py        # Game questions and scoring
+  utils/
+    errors.py              # error_response() helper
+    auth_decorators.py     # @requires_role() decorator
+```
 
-**Query Parameters for GET:**
-- `?topicId=1` - Posts for specific topic
-- `?userId=123` - Posts by specific user  
-- `?search=flask` - Search content
-- `?limit=20` - Limit results
+## API Reference
 
-### MicroBlog Interactions
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/api/microblog/reply` | Add reply to post |
-| POST | `/api/microblog/reaction` | Add reaction (👍, ❤️, etc.) |
-| DELETE | `/api/microblog/reaction` | Remove reaction |
+### Auth — `/api/auth`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/login` | — | Log in with email + password |
+| POST | `/register` | — | Create resident account |
+| POST | `/logout` | Session | End session |
+| GET | `/me` | Session | Get current user profile |
 
-### Microblog Page Integration
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/api/microblog/page/<page_key>` | Get posts for specific page |
-| POST | `/api/microblog/topics/auto-create` | Auto-create topic for page |
-| GET | `/api/microblog/topics?pagePath=X` | Get topic by page path |
+### FAQ — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/faq/categories` | — | All FAQ categories |
+| GET | `/faq/items?category_id=` | — | Items in a category |
+| GET | `/faq/search?q=` | — | Search FAQ |
+| POST | `/faq/helpful/{id}` | — | Mark helpful |
+| POST | `/questions/submit` | Optional | Submit question to staff |
+| GET | `/questions` | staff+ | All questions (with ?status filter) |
+| PATCH | `/questions/{id}/claim` | staff+ | Claim a question |
+| PATCH | `/questions/{id}/answer` | staff+ | Answer a question |
 
-## Idea
+### Events — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/events` | — | All upcoming events |
+| GET | `/events/calendar?month=&year=` | — | Events for calendar month |
+| POST | `/events` | coordinator+ | Create event |
 
-### Files and Directories in this Project
+### Media — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/media?page=` | — | Paginated media posts |
+| POST | `/media` | coordinator+ | Upload media (multipart) |
 
-The key files and directories in this project are in these online articles.
+### Risk — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/risk` | — | Live Poway hazard assessment (fire/flood/heat) |
 
-[Python/Flask](https://pages.opencodingsociety.com/python/flask)
+### Neighborhoods — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/neighborhoods` | — | All neighborhoods |
+| GET | `/neighborhoods/{id}` | — | Neighborhood detail + coordinator info |
 
-[Legacy - Flask Intro](https://pages.opencodingsociety.com/flask-overview)
+## Architecture Patterns
 
-### Implementation Summary
+**SRP (Single Responsibility Principle):** Routes delegate all logic to services. Services call models. No business logic in routes.
 
-#### Oct 2025
+**Orchestrator / Worker separation:** Routes are thin orchestrators that validate input and call service workers. Service functions do exactly one thing and return `(result, error_key)` tuples on failure.
 
-> Updates for 2025-2026 school year.  Focus on documentation and API functionality.
-
-- Work to make documentation materials useful.
-- Add gemini API's
-- Add microblog API's, social medai support
-
-#### July 2024
-
-> Updates for 2024 too 2025 school year.  Primary addition is a fully functional backend for JWT login system.
-
-- Full support for JWT cookies
-- The API's for CRUD methods
-- The model definition User Class and related tables
-- SQLite and RDS support
-- Minimal Server side UI in Jinja2
-
-#### July 2023
-
-> Updates for 2023 to 2024 school year.
-
-- Update README with File Descriptions (anatomy)
-- Add JWT and add security features using a SQLite user database
-- Add migrate.sh to support sqlite schema and data upgrade
-
-#### January 2023
-
-> This project focuses on being a Python backend server.  Intentions are to only have simple UIs an perhaps some Administrative UIs.
-
-#### September 2021
-
-> Basic UI elements were implemented showing server side Flask with Jinja 2 capabilities.
-
-- The Project entry point is main.py, this enables the Flask Web App and provides the capability to render templates (HTML files)
-- The main.py is the  Web Server Gateway Interface, essentially it contains an HTTP route and HTML file relationship.  The Python code constructs WSGI relationships for index, kangaroos, walruses, and hawkers.
-- The project structure contains many directories and files.  The template directory (containing HTML files) and static directory (containing JS files) are common standards for HTML coding.  Static files can be pictures and videos, in this project they are mostly javascript backgrounds.
-- WSGI templates: index.html, kangaroos.html, ... are aligned with routes in main.py.
-- Other templates support WSGI templates.  The base.html template contains common Head, Style, Body, and Script definitions.  WSGI templates often "include" or "extend" these templates.  This is a way to reuse code.
-- The VANTA javascript statics (backgrounds) are shown and defaulted in base.html (birds) but are block-replaced as needed in other templates (solar, net, ...)
-- The Bootstrap Navbar code is in navbar.html. The base.html code includes navbar.html.  The WSGI html files extend base.html files.  This is a process of management and correlation to optimize code management.  For instance, if the menu changes discovery of navbar.html is easy, one change reflects on all WSGI html files.
-- Jinja2 variables usage is to isolate data and allow redefinitions of attributes in templates.  Observe "{% set variable = %}" syntax for definition and "{{ variable }}" for reference.
-- The base.html uses a combination of Bootstrap grid styling and custom CSS styling.  Grid styling in observation with the "<Col-3>" markers.  A Bootstrap Grid has a width of 12, thus four "Col-3" markers could fit on a Grid row.
-- A key purpose of this project is to embed links to other content.  The "href=" definition embeds hyperlinks into the rendered HTML.  The base.html file shows usage of "href={{github}}", the "{{github}}" is a Jinja2 variable.  Jinja2 variables are pre-processed by Python, a variable swap with value, before being sent to the browser.
-
-## Database Management Workflow with Scripts
-
-If you are working with the database, follow the below procedure to safely interact with the remote DB while applying changes locally. Certain scripts require flask to be running while others don't, so follow the instructions that the scripts provide.
-
-Note, steps 1,2,3,5 are on your development (LOCAL) server. You need to update your .env on development server and be sure all PRs are completed, pulled, and tested before you start pushing to production.
-
-0. Be sure ADMIN_PASSWORD is set in .env.  You will need a venv for the python scripts.
-
-1. Initialize your local DB with clean data. For example, this would be good to see that a schema update works correctly.
-   ```bash
-   python scripts/db_init.py
-   ```
-
-2. Pull the database content from the remote DB onto your local machine. This allows you to work with real data and test that real data works with your local changes.
-   ```bash
-   python scripts/db_migrate-prod2sqlite.py
-   ```
-
-3. TEST TEST TEST! Make sure your changes work correctly with the local DB.
-
-4. Now go onto the remote DB and back up the db using `cp sqlite.db backups/sqlite_year-month-day.db` in the volumes directory of the flask directory on cockpit. Then, run `git pull` to ensure that flask has been updated with the latest code. Then, run `python scripts/db_init.py` again to ensure that the remote DB schema is up to date with the latest code.
-
-5. Once you are satisfied with your changes, push the local DB content to the remote DB. This requires authentication, so you need to replace the ADMIN_PASSWORD in the .env file of "flask" with the production admin password.
-   ```bash
-   python scripts/db_restore-sqlite2prod.py
-   ```
-
-### Condensed DB/Schema update simple steps
-*(a copy of what's above, just condensed)*
-
-1. Initialize local DB: `python scripts/db_init.py`
-
-2. Pull production data to local: `python scripts/db_migrate-prod2sqlite.py`
-
-3. Test your changes locally
-
-4. On production server (in cockpit):
-   - Backup DB in volumes directory: `cp sqlite.db backups/sqlite_year-month-day.db`
-   - Update code: `git pull`
-   - Update schema: `python scripts/db_init.py`
-
-5. Push local changes to production: `python scripts/db_restore-sqlite2prod.py` (Requires admin password from production in .env)
+**Role hierarchy:** `resident` < `coordinator` < `staff` < `admin`. Protected routes use the `@requires_role('staff', 'admin')` decorator from `utils/auth_decorators.py`.

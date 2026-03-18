@@ -1,6 +1,8 @@
 # app/routes/events.py
 # Responsibility: Events API endpoints — list, calendar view, create.
 
+from datetime import datetime
+
 from flask import Blueprint, request, jsonify
 from flask_login import current_user
 
@@ -27,7 +29,6 @@ def get_calendar_events():
     except (ValueError, TypeError):
         return error_response('VALIDATION_FAILED', 400, {'detail': 'year and month must be integers'})
 
-    from datetime import datetime
     events = events_service.get_events_for_month(year, month)
     return jsonify({'events': events, 'year': year, 'month': month}), 200
 

@@ -60,6 +60,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         _seed_admin_if_missing(app)
+        _seed_initial_data()
 
     return app
 
@@ -116,6 +117,20 @@ def _seed_admin_if_missing(app):
     )
     db.session.add(admin)
     db.session.commit()
+
+
+def _seed_initial_data():
+    """
+    Purpose: Seed neighborhoods and FAQ data on first run.
+    @returns {void}
+    Algorithm:
+    1. Call seed_neighborhoods() — skips if data exists
+    2. Call seed_faq() — skips if data exists
+    """
+    from app.services.neighborhood_service import seed_neighborhoods
+    from app.services.faq_service import seed_faq
+    seed_neighborhoods()
+    seed_faq()
 
 
 # ── Flask-Login user loader ────────────────────────────────────────────────────
