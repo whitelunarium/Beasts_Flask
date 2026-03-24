@@ -2,7 +2,7 @@
 # Responsibility: Flask application factory — creates and wires together the app instance.
 # All extensions, blueprints, and startup tasks are registered here and nowhere else.
 
-from flask import Flask
+from flask import Flask, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager
@@ -53,6 +53,8 @@ def create_app():
         origins=[
             'http://localhost:4000',
             'http://127.0.0.1:4000',
+            'http://localhost:4600',
+            'http://127.0.0.1:4600',
             'http://localhost:4500',
             'http://127.0.0.1:4500',
             'http://localhost:8080',
@@ -60,6 +62,11 @@ def create_app():
         ],
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     )
+
+    @app.get('/')
+    def root_health():
+        """Return a simple health payload for the backend root URL."""
+        return jsonify({'status': 'ok', 'message': 'Flask backend is running'}), 200
 
     # ── Register blueprints ───────────────────────────────────────────────────
     _register_blueprints(app)
@@ -88,6 +95,7 @@ def _register_blueprints(app):
     from app.routes.events import events_bp
     from app.routes.media import media_bp
     from app.routes.game import game_bp
+    from app.routes.titanic import titanic_bp
     from app.routes.admin import admin_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
@@ -97,6 +105,7 @@ def _register_blueprints(app):
     app.register_blueprint(events_bp,        url_prefix='/api')
     app.register_blueprint(media_bp,         url_prefix='/api')
     app.register_blueprint(game_bp,          url_prefix='/api')
+    app.register_blueprint(titanic_bp,       url_prefix='/api')
     app.register_blueprint(admin_bp,         url_prefix='/api/admin')
 
 
