@@ -1,21 +1,12 @@
 server {
     listen 80;
     listen [::]:80;
-    server_name flask.opencodingsociety.com;
+    # Replace with your assigned Route 53 subdomain before enabling this site.
+    server_name your-subdomain.opencodingsociety.com;
 
-    # Proxy Socket.IO connections to 8500
-    location /socket.io/ {
-        proxy_pass http://localhost:8500;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-
-    # Proxy all other traffic to Flask app on 8587
+    # Proxy all traffic to the Flask app on 8425.
     location / {
-        proxy_pass http://localhost:8587;
+        proxy_pass http://localhost:8425;
         proxy_http_version 1.1;
         proxy_set_header Host $host;
 

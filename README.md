@@ -38,10 +38,10 @@ MAIL_PASSWORD=
 
 ```bash
 source venv/bin/activate
-flask run --port 8587
+flask run --port 8425
 ```
 
-API available at `http://localhost:8587`. Frontend expects port 8587 (set in `assets/js/utils/errors.js`).
+API available at `http://localhost:8425`.
 
 ### Database
 
@@ -53,7 +53,7 @@ SQLite database is created automatically on first run at `instance/pnec.db`. On 
 To reset and re-seed:
 ```bash
 rm instance/pnec.db
-flask run --port 8587
+flask run --port 8425
 ```
 
 ## Directory Structure
