@@ -7,7 +7,7 @@ Python Flask API server for the Poway Neighborhood Emergency Corps website. Prov
 **Prerequisites:** Python 3.9+
 
 ```bash
-cd BB_Flask2
+cd Beasts_Flask
 python3 -m venv venv
 source venv/bin/activate       # Windows: venv\Scripts\activate
 pip install -r requirements.txt

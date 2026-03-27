@@ -1,11 +1,11 @@
 #!/bin/bash
 # scripts/setup.sh
-# Run this once to set up your local BB_Flask2 development environment.
-# Usage: cd /Users/samarthvaka/BB_Flask2 && bash scripts/setup.sh
+# Run this once to set up your local Beasts_Flask development environment.
+# Usage: cd /Users/samarthvaka/Beasts_Flask && bash scripts/setup.sh
 
 set -e  # exit on any error
 
-echo "=== BB_Flask2 Setup ==="
+echo "=== Beasts_Flask Setup ==="
 cd "$(dirname "$0")/.."
 
 # ── 1. Python venv ───────────────────────────────────────────────────────────
