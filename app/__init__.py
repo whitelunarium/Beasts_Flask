@@ -460,8 +460,10 @@ def _seed_initial_data():
     """
     from app.services.neighborhood_service import seed_neighborhoods
     from app.services.faq_service import seed_faq
+    from app.services.operations_service import seed_operations_data
     seed_neighborhoods()
     seed_faq()
+    seed_operations_data()
 
 
 # ── Flask-Login user loader ────────────────────────────────────────────────────

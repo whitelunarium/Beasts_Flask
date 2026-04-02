@@ -4,6 +4,7 @@
 from flask import Blueprint, request, jsonify, redirect, url_for, render_template_string
 from flask_login import current_user, login_user, logout_user
 from app.models.user import User
+from app.services.operations_service import get_operations_snapshot
 from app.services.auth_service import update_user_role, authenticate_user
 from app.utils.errors import error_response
 from app.utils.auth_decorators import requires_role, requires_min_role
@@ -139,6 +140,7 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
       padding: 10px 14px;
       border-radius: 10px;
       font-weight: 700;
+      margin-left: 8px;
     }
     .panel {
       border: 1px solid var(--line);
@@ -185,6 +187,7 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
         <p>Viewing the real users stored in the Flask backend database.</p>
       </div>
       <div class="actions">
+        <a href="{{ url_for('admin.admin_operations_page') }}">Operations Dashboard</a>
         <a href="{{ url_for('admin.admin_logout_page') }}">Logout</a>
       </div>
     </div>
@@ -212,6 +215,139 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
             <td>{{ 'Yes' if user.is_active else 'No' }}</td>
             <td>{{ user.neighborhood_id if user.neighborhood_id is not none else '—' }}</td>
             <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </section>
+  </div>
+</body>
+</html>
+"""
+
+_ADMIN_OPERATIONS_TEMPLATE = """
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PNEC Operations Dashboard</title>
+  <style>
+    :root {
+      --bg: #09111f;
+      --panel: #101b31;
+      --line: rgba(255,255,255,0.12);
+      --text: #edf3ff;
+      --muted: #9cb1d2;
+      --accent: #72af2f;
+      --warn: #f59e0b;
+      --danger: #ef4444;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      padding: 24px;
+      font-family: Arial, sans-serif;
+      color: var(--text);
+      background: linear-gradient(180deg, #08111f 0%, #0f1a2f 100%);
+    }
+    .shell { max-width: 1280px; margin: 0 auto; }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .title h1 { margin: 0 0 6px; }
+    .title p { margin: 0; color: var(--muted); }
+    .actions a {
+      display: inline-block;
+      text-decoration: none;
+      color: white;
+      background: var(--accent);
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-weight: 700;
+      margin-left: 8px;
+    }
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      background: var(--panel);
+      overflow: hidden;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+    }
+    th { color: var(--muted); font-size: 0.9rem; }
+    tr:last-child td { border-bottom: 0; }
+    .chip {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 12px;
+      border: 1px solid transparent;
+    }
+    .chip-immediate { background: rgba(239,68,68,0.15); border-color: rgba(239,68,68,0.35); }
+    .chip-high { background: rgba(245,158,11,0.15); border-color: rgba(245,158,11,0.35); }
+    .chip-moderate { background: rgba(59,130,246,0.14); border-color: rgba(59,130,246,0.28); }
+    .chip-stable { background: rgba(114,175,47,0.15); border-color: rgba(114,175,47,0.35); }
+    @media (max-width: 960px) {
+      body { padding: 12px; }
+      .panel { overflow-x: auto; }
+      table { min-width: 980px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <div class="title">
+        <h1>Volunteer + Resource Optimization</h1>
+        <p>Neighborhood pressure scores combine resident load, zone severity, volunteer coverage, and supply inventory.</p>
+      </div>
+      <div class="actions">
+        <a href="{{ url_for('admin.admin_accounts_page') }}">Accounts</a>
+        <a href="{{ url_for('admin.admin_logout_page') }}">Logout</a>
+      </div>
+    </div>
+    <section class="panel">
+      <table>
+        <thead>
+          <tr>
+            <th>Neighborhood</th>
+            <th>Zone</th>
+            <th>Residents</th>
+            <th>Volunteers</th>
+            <th>Resource Units</th>
+            <th>Pressure</th>
+            <th>Priority</th>
+            <th>Recommended Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for item in recommendations %}
+          <tr>
+            <td>#{{ item.number }} {{ item.name }}</td>
+            <td>{{ item.zone or '—' }}</td>
+            <td>{{ item.resident_count }}</td>
+            <td>{{ item.volunteer_count }}</td>
+            <td>{{ item.resource_units }}</td>
+            <td>{{ item.pressure_score }}</td>
+            <td>
+              <span class="chip chip-{{ item.priority|lower }}">{{ item.priority }}</span>
+            </td>
+            <td>{{ item.recommended_action }}</td>
           </tr>
           {% endfor %}
         </tbody>
@@ -266,6 +402,26 @@ def admin_accounts_page():
 
     users = User.query.order_by(User.created_at.desc()).all()
     return render_template_string(_ADMIN_ACCOUNTS_TEMPLATE, users=users, current_user=current_user)
+
+
+@admin_bp.route('/operations', methods=['GET'])
+def admin_operations_page():
+    """Render an admin-only volunteer/resource optimization dashboard."""
+    if not current_user.is_authenticated:
+        return redirect(url_for('admin.admin_login_page', next=request.path))
+    if current_user.role != 'admin':
+        logout_user()
+        return redirect(url_for('admin.admin_login_page', next=request.path))
+
+    recommendations = get_operations_snapshot()
+    return render_template_string(_ADMIN_OPERATIONS_TEMPLATE, recommendations=recommendations, current_user=current_user)
+
+
+@admin_bp.route('/operations/data', methods=['GET'])
+@requires_min_role('staff')
+def admin_operations_data():
+    """Return machine-readable operations recommendations for staff/admin users."""
+    return jsonify({'recommendations': get_operations_snapshot()}), 200
 
 
 @admin_bp.route('/users', methods=['GET'])

@@ -1,227 +1,327 @@
 # app/services/risk_service.py
-# Responsibility: Risk assessment logic — fire, flood, and heat scoring from Open-Meteo.
-# PPR ML COMPONENT: risk scoring algorithms are documented as the machine learning feature.
-# ORCHESTRATOR: get_risk_assessment() — calls all three workers, assembles response.
-# WORKERS: compute_fire_risk(), compute_flood_risk(), compute_heat_risk()
+# Responsibility: Neighborhood-aware risk assessment and anomaly detection for
+# wildfire, flood, and extreme heat in Poway.
 
+from datetime import datetime
 import time
+
 import requests
 from flask import current_app
 
-# ─── Module-level cache (process-scoped, 30 min TTL) ─────────────────────────
-_risk_cache = {
-    'data': None,
-    'expires_at': 0,
+from app.models.neighborhood import Neighborhood
+
+_risk_cache = {}
+
+ZONE_FIRE_BONUS = {
+    'A': 2,
+    'B': 1,
+    'C': 0,
+    'D': -1,
+}
+
+ZONE_FLOOD_BONUS = {
+    'A': 1,
+    'B': 1,
+    'C': 0,
+    'D': 0,
 }
 
 
-def get_risk_assessment():
-    """
-    Purpose: ORCHESTRATOR — return a cached risk assessment, refreshing if stale.
-    @returns {dict} { fire_score, flood_score, heat_score, conditions, updated_at }
-    Algorithm:
-    1. Check if cache is still valid (TTL not expired)
-    2. If valid: return cached result immediately
-    3. If stale: fetch fresh conditions from Open-Meteo
-    4. Compute all three risk scores
-    5. Store in cache with new expiry and return
-    """
+def get_risk_assessment(neighborhood_id=None):
+    """Return a cached risk assessment, optionally tuned for a neighborhood."""
+    cache_key = str(neighborhood_id or 'citywide')
     now = time.time()
-    if _risk_cache['data'] and _risk_cache['expires_at'] > now:
-        return _risk_cache['data']
+    cached = _risk_cache.get(cache_key)
+    if cached and cached['expires_at'] > now:
+        return cached['data']
 
-    conditions = _fetch_poway_conditions()
-    result = _assemble_risk_response(conditions)
+    weather_payload = _fetch_poway_weather()
+    neighborhood = _get_neighborhood_context(neighborhood_id)
+    current_conditions, forecast_days = _parse_weather_payload(weather_payload)
+    air_quality = _fetch_air_quality()
 
-    _risk_cache['data'] = result
-    _risk_cache['expires_at'] = now + current_app.config.get('RISK_CACHE_SECONDS', 1800)
+    result = _assemble_risk_response(current_conditions, forecast_days, air_quality, neighborhood)
+    _risk_cache[cache_key] = {
+        'data': result,
+        'expires_at': now + current_app.config.get('RISK_CACHE_SECONDS', 1800),
+    }
     return result
 
 
-def _fetch_poway_conditions():
-    """
-    Purpose: WORKER — retrieve current weather conditions for Poway from Open-Meteo.
-    @returns {dict} Parsed conditions dict, or fallback defaults on error
-    Algorithm:
-    1. Build Open-Meteo API URL with Poway coordinates
-    2. Request current + daily fields
-    3. Parse response into a flat conditions dict
-    4. Return fallback on any exception
-    """
+def _fetch_poway_weather():
     lat = current_app.config.get('POWAY_LAT', 32.9628)
     lon = current_app.config.get('POWAY_LON', -117.0359)
     url = current_app.config.get('OPEN_METEO_URL', 'https://api.open-meteo.com/v1/forecast')
-
     params = {
-        'latitude':  lat,
+        'latitude': lat,
         'longitude': lon,
-        'current':   'temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation',
-        'daily':     'precipitation_sum',
+        'current': 'temperature_2m,relative_humidity_2m,wind_speed_10m,precipitation',
+        'daily': 'temperature_2m_max,temperature_2m_min,precipitation_sum,wind_speed_10m_max',
         'temperature_unit': 'fahrenheit',
-        'wind_speed_unit':  'mph',
+        'wind_speed_unit': 'mph',
         'precipitation_unit': 'inch',
-        'forecast_days': 8,
+        'forecast_days': 6,
         'timezone': 'America/Los_Angeles',
     }
 
     try:
-        resp = requests.get(url, params=params, timeout=10)
-        resp.raise_for_status()
-        return _parse_open_meteo_response(resp.json())
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        return response.json()
     except Exception:
-        return _fallback_conditions()
+        return {}
 
 
-def _parse_open_meteo_response(data):
-    """
-    Purpose: WORKER — extract relevant fields from the Open-Meteo JSON response.
-    @param {dict} data - Raw Open-Meteo API response dict
-    @returns {dict} Flat conditions dict with temp_f, humidity, wind_mph, precip_in, rain_7d_in
-    Algorithm:
-    1. Pull current weather values
-    2. Sum last 7 days of precipitation from daily array
-    3. Return normalized dict
-    """
-    current = data.get('current', {})
-    daily   = data.get('daily', {})
+def _fetch_air_quality():
+    lat = current_app.config.get('POWAY_LAT', 32.9628)
+    lon = current_app.config.get('POWAY_LON', -117.0359)
+    url = current_app.config.get('OPEN_METEO_AIR_QUALITY_URL', 'https://air-quality-api.open-meteo.com/v1/air-quality')
+    params = {
+        'latitude': lat,
+        'longitude': lon,
+        'current': 'us_aqi,pm2_5,pm10',
+        'timezone': 'America/Los_Angeles',
+    }
 
-    temp_f   = current.get('temperature_2m', 72)
-    humidity = current.get('relative_humidity_2m', 50)
-    wind_mph = current.get('wind_speed_10m', 0)
-    precip   = current.get('precipitation', 0)
+    try:
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        current = response.json().get('current', {})
+        return {
+            'us_aqi': current.get('us_aqi'),
+            'pm2_5': current.get('pm2_5'),
+            'pm10': current.get('pm10'),
+        }
+    except Exception:
+        return {'us_aqi': None, 'pm2_5': None, 'pm10': None}
 
-    # Sum of last 7 days precipitation (indices 0–6)
-    daily_precip = daily.get('precipitation_sum', [])
-    rain_7d = sum(v for v in daily_precip[:7] if v is not None)
+
+def _parse_weather_payload(payload):
+    current = payload.get('current', {}) if isinstance(payload, dict) else {}
+    daily = payload.get('daily', {}) if isinstance(payload, dict) else {}
+
+    current_conditions = {
+        'temp_f': round(current.get('temperature_2m', 72), 1),
+        'temperature_f': round(current.get('temperature_2m', 72), 1),
+        'humidity': round(current.get('relative_humidity_2m', 45), 1),
+        'wind_mph': round(current.get('wind_speed_10m', 6), 1),
+        'precip_in': round(current.get('precipitation', 0), 2),
+        'precip_1hr_in': round(current.get('precipitation', 0), 2),
+        'rain_7d_in': round(sum(value or 0 for value in daily.get('precipitation_sum', [])[:5]), 2),
+        'precip_48hr_in': round(sum(value or 0 for value in daily.get('precipitation_sum', [])[:2]), 2),
+    }
+
+    forecast_days = []
+    dates = daily.get('time', [])
+    max_temps = daily.get('temperature_2m_max', [])
+    min_temps = daily.get('temperature_2m_min', [])
+    precip = daily.get('precipitation_sum', [])
+    max_wind = daily.get('wind_speed_10m_max', [])
+
+    for index, date_value in enumerate(dates[:5]):
+        forecast_days.append({
+            'date': date_value,
+            'temp_max_f': round(max_temps[index], 1) if index < len(max_temps) and max_temps[index] is not None else current_conditions['temp_f'],
+            'temp_min_f': round(min_temps[index], 1) if index < len(min_temps) and min_temps[index] is not None else current_conditions['temp_f'] - 10,
+            'precip_in': round(precip[index], 2) if index < len(precip) and precip[index] is not None else 0,
+            'wind_mph': round(max_wind[index], 1) if index < len(max_wind) and max_wind[index] is not None else current_conditions['wind_mph'],
+        })
+
+    return current_conditions, forecast_days
+
+
+def _get_neighborhood_context(neighborhood_id):
+    if not neighborhood_id:
+        return None
+
+    neighborhood = Neighborhood.query.get(neighborhood_id)
+    if not neighborhood:
+        return None
 
     return {
-        'temp_f':    round(temp_f, 1),
-        'humidity':  round(humidity, 1),
-        'wind_mph':  round(wind_mph, 1),
-        'precip_in': round(precip, 2),
-        'rain_7d_in': round(rain_7d, 2),
+        'id': neighborhood.id,
+        'name': neighborhood.name,
+        'number': neighborhood.number,
+        'zone': neighborhood.zone or 'B',
     }
 
 
-def _fallback_conditions():
-    """Return safe default conditions used when the API call fails."""
-    return {'temp_f': 72, 'humidity': 50, 'wind_mph': 5, 'precip_in': 0, 'rain_7d_in': 0}
-
-
-def compute_fire_risk(conditions):
-    """
-    Purpose: WORKER — compute a 0–10 fire risk score from current conditions.
-    @param {dict} conditions - Flat conditions dict from _parse_open_meteo_response
-    @returns {int} Fire risk score 0–10
-    Algorithm:
-    PPR ML SCORING — additive risk factor model:
-    - Temperature > 90°F:  +3 points (high heat dries vegetation)
-    - Humidity < 20%:      +3 points (low humidity raises ignition probability)
-    - Wind > 25 mph:       +2 points (wind spreads fire rapidly)
-    - No rain 7 days:      +2 points (dry fuel accumulation)
-    Score is clamped to [0, 10].
-    """
+def compute_fire_risk(conditions, neighborhood=None):
     score = 0
-    if conditions['temp_f'] > 90:
-        score += 3
-    if conditions['humidity'] < 20:
-        score += 3
-    if conditions['wind_mph'] > 25:
-        score += 2
-    if conditions['rain_7d_in'] < 0.1:
-        score += 2
-    return min(score, 10)
-
-
-def compute_flood_risk(conditions):
-    """
-    Purpose: WORKER — compute a 0–10 flood risk score from current conditions.
-    @param {dict} conditions - Flat conditions dict
-    @returns {int} Flood risk score 0–10
-    Algorithm:
-    PPR ML SCORING — additive risk factor model:
-    - Current precip > 0.5 in/hr: +4 points (active heavy rain)
-    - 7-day total > 1 inch:       +3 points (saturated ground)
-    - Temperature near freezing:  +1 point  (impervious frozen ground)
-    Score is clamped to [0, 10].
-    """
-    score = 0
-    if conditions['precip_in'] > 0.5:
+    if conditions['temp_f'] >= 95:
         score += 4
-    if conditions['rain_7d_in'] > 1.0:
+    elif conditions['temp_f'] >= 85:
+        score += 2
+    if conditions['humidity'] <= 20:
         score += 3
-    if conditions['temp_f'] <= 35:
+    elif conditions['humidity'] <= 30:
         score += 1
-    return min(score, 10)
+    if conditions['wind_mph'] >= 25:
+        score += 2
+    elif conditions['wind_mph'] >= 15:
+        score += 1
+    if conditions['rain_7d_in'] <= 0.1:
+        score += 2
+    elif conditions['rain_7d_in'] <= 0.4:
+        score += 1
+
+    if neighborhood:
+        score += ZONE_FIRE_BONUS.get(neighborhood.get('zone'), 0)
+
+    return max(0, min(score, 10))
+
+
+def compute_flood_risk(conditions, neighborhood=None):
+    score = 0
+    if conditions['precip_1hr_in'] >= 0.5:
+        score += 4
+    elif conditions['precip_1hr_in'] >= 0.2:
+        score += 2
+    if conditions['precip_48hr_in'] >= 1.0:
+        score += 3
+    elif conditions['precip_48hr_in'] >= 0.5:
+        score += 1
+    if conditions['rain_7d_in'] >= 1.5:
+        score += 2
+
+    if neighborhood:
+        score += ZONE_FLOOD_BONUS.get(neighborhood.get('zone'), 0)
+
+    return max(0, min(score, 10))
 
 
 def compute_heat_risk(conditions):
-    """
-    Purpose: WORKER — compute a heat index score from temperature and humidity.
-    @param {dict} conditions - Flat conditions dict
-    @returns {dict} { heat_index_f, score } where score is 0–10
-    Algorithm:
-    PPR ML SCORING — simplified Rothfusz heat index formula:
-    HI = -42.379 + 2.049*T + 10.142*RH - 0.225*T*RH - 0.006837*T² - 0.0548*RH²
-         + 0.001228*T²*RH + 0.0008528*T*RH² - 0.000001991*T²*RH²
-    Score: HI < 80 → 0, 80–90 → 3, 90–103 → 6, > 103 → 9
-    """
-    T  = conditions['temp_f']
-    RH = conditions['humidity']
+    temp_f = conditions['temp_f']
+    humidity = conditions['humidity']
 
-    hi = (-42.379
-          + 2.04901523 * T
-          + 10.14333127 * RH
-          - 0.22475541 * T * RH
-          - 0.00683783 * T * T
-          - 0.05481717 * RH * RH
-          + 0.00122874 * T * T * RH
-          + 0.00085282 * T * RH * RH
-          - 0.00000199 * T * T * RH * RH)
+    heat_index = (
+        -42.379
+        + 2.04901523 * temp_f
+        + 10.14333127 * humidity
+        - 0.22475541 * temp_f * humidity
+        - 0.00683783 * temp_f * temp_f
+        - 0.05481717 * humidity * humidity
+        + 0.00122874 * temp_f * temp_f * humidity
+        + 0.00085282 * temp_f * humidity * humidity
+        - 0.00000199 * temp_f * temp_f * humidity * humidity
+    )
 
-    hi = max(hi, T)  # heat index can't be lower than actual temp
-
-    if hi >= 103:
+    heat_index = round(max(heat_index, temp_f), 1)
+    if heat_index >= 103:
         score = 9
-    elif hi >= 90:
-        score = 6
-    elif hi >= 80:
-        score = 3
+    elif heat_index >= 95:
+        score = 7
+    elif heat_index >= 85:
+        score = 4
     else:
+        score = 1 if temp_f >= 80 else 0
+
+    return {'heat_index_f': heat_index, 'score': score}
+
+
+def build_wildfire_forecast(forecast_days, neighborhood=None):
+    forecast = []
+    zone_bonus = ZONE_FIRE_BONUS.get((neighborhood or {}).get('zone'), 0)
+
+    for day in forecast_days:
         score = 0
+        if day['temp_max_f'] >= 95:
+            score += 4
+        elif day['temp_max_f'] >= 85:
+            score += 2
+        if day['wind_mph'] >= 25:
+            score += 3
+        elif day['wind_mph'] >= 15:
+            score += 1
+        if day['precip_in'] <= 0.05:
+            score += 2
+        score += zone_bonus
 
-    return {'heat_index_f': round(hi, 1), 'score': score}
+        score = max(0, min(score, 10))
+        forecast.append({
+            'date': day['date'],
+            'fire_score': score,
+            'fire_level': _score_label(score),
+            'temp_max_f': day['temp_max_f'],
+            'wind_mph': day['wind_mph'],
+            'precip_in': day['precip_in'],
+        })
+
+    return forecast
 
 
-def _assemble_risk_response(conditions):
-    """
-    Purpose: ORCHESTRATOR — call all three risk workers and assemble the final response dict.
-    @param {dict} conditions - Parsed weather conditions
-    @returns {dict} Complete risk assessment payload
-    Algorithm:
-    1. Compute fire, flood, and heat scores
-    2. Label each with human-readable severity
-    3. Return combined dict with conditions and timestamp
-    """
-    fire_score  = compute_fire_risk(conditions)
-    flood_score = compute_flood_risk(conditions)
-    heat_data   = compute_heat_risk(conditions)
+def build_anomaly_alerts(conditions, heat_data, air_quality, wildfire_forecast):
+    alerts = []
+
+    if conditions['wind_mph'] >= 25:
+        alerts.append({
+            'severity': 'high',
+            'title': 'Strong wind conditions detected',
+            'message': f'Winds are at {conditions["wind_mph"]} mph, which can accelerate wildfire spread.',
+        })
+    if air_quality.get('us_aqi') is not None and air_quality['us_aqi'] >= 100:
+        alerts.append({
+            'severity': 'high' if air_quality['us_aqi'] >= 150 else 'moderate',
+            'title': 'Air quality alert',
+            'message': f'US AQI is {air_quality["us_aqi"]}. Limit outdoor activity for vulnerable residents.',
+        })
+    if heat_data['heat_index_f'] >= 100:
+        alerts.append({
+            'severity': 'high',
+            'title': 'Dangerous heat stress',
+            'message': f'Heat index is {heat_data["heat_index_f"]}F. Check on seniors, children, and outdoor workers.',
+        })
+    if conditions['precip_1hr_in'] >= 0.5 or conditions['precip_48hr_in'] >= 1.0:
+        alerts.append({
+            'severity': 'moderate',
+            'title': 'Flooding conditions',
+            'message': 'Heavy recent rainfall may create localized flooding on roads and low-lying areas.',
+        })
+
+    next_critical = next((day for day in wildfire_forecast if day['fire_score'] >= 8), None)
+    if next_critical:
+        alerts.append({
+            'severity': 'high',
+            'title': 'Elevated wildfire forecast',
+            'message': f'{next_critical["date"]} is forecast to reach {next_critical["fire_level"]} wildfire conditions.',
+        })
+
+    return alerts
+
+
+def _assemble_risk_response(conditions, forecast_days, air_quality, neighborhood):
+    fire_score = compute_fire_risk(conditions, neighborhood)
+    flood_score = compute_flood_risk(conditions, neighborhood)
+    heat_data = compute_heat_risk(conditions)
+    wildfire_forecast = build_wildfire_forecast(forecast_days, neighborhood)
+    anomaly_alerts = build_anomaly_alerts(conditions, heat_data, air_quality, wildfire_forecast)
+
+    enriched_conditions = {
+        **conditions,
+        'heat_index_f': heat_data['heat_index_f'],
+        'us_aqi': air_quality.get('us_aqi'),
+        'pm2_5': air_quality.get('pm2_5'),
+        'pm10': air_quality.get('pm10'),
+    }
 
     return {
-        'fire_score':    fire_score,
-        'fire_level':    _score_label(fire_score),
-        'flood_score':   flood_score,
-        'flood_level':   _score_label(flood_score),
-        'heat_score':    heat_data['score'],
-        'heat_level':    _score_label(heat_data['score']),
-        'heat_index_f':  heat_data['heat_index_f'],
-        'conditions':    conditions,
-        'updated_at':    int(time.time()),
+        'neighborhood': neighborhood,
+        'fire_score': fire_score,
+        'fire_level': _score_label(fire_score),
+        'flood_score': flood_score,
+        'flood_level': _score_label(flood_score),
+        'heat_score': heat_data['score'],
+        'heat_level': _score_label(heat_data['score']),
+        'heat_index_f': heat_data['heat_index_f'],
+        'conditions': enriched_conditions,
+        'wildfire_forecast': wildfire_forecast,
+        'forecast_days': forecast_days,
+        'anomaly_alerts': anomaly_alerts,
+        'updated_at': datetime.utcnow().isoformat(),
     }
 
 
 def _score_label(score):
-    """Map a 0–10 score to a human-readable severity label."""
     if score <= 2:
         return 'LOW'
     if score <= 4:

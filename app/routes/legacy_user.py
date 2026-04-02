@@ -28,6 +28,7 @@ def create_legacy_user():
     uid = (data.get('uid') or '').strip()
     email = (data.get('email') or '').strip().lower()
     password = (data.get('password') or '').strip()
+    neighborhood_id = data.get('neighborhood_id') or None
 
     if not display_name and uid:
         display_name = uid
@@ -48,7 +49,7 @@ def create_legacy_user():
             {'detail': 'Password must be at least 8 characters'}
         )
 
-    user, err = create_user(email, password, display_name, neighborhood_id=None)
+    user, err = create_user(email, password, display_name, neighborhood_id=neighborhood_id)
     if err:
         status = 409 if err == 'DUPLICATE_EMAIL' else 400
         return error_response(err, status)

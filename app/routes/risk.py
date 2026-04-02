@@ -1,7 +1,7 @@
 # app/routes/risk.py
 # Responsibility: Risk API endpoint — returns current fire/flood/heat assessment.
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, request
 from app.services import risk_service
 from app.utils.errors import error_response
 
@@ -19,7 +19,8 @@ def get_risk():
     3. Catch any unexpected errors and return 503
     """
     try:
-        assessment = risk_service.get_risk_assessment()
+        neighborhood_id = request.args.get('neighborhood_id', type=int)
+        assessment = risk_service.get_risk_assessment(neighborhood_id=neighborhood_id)
         return jsonify(assessment), 200
     except Exception as e:
         return error_response('SERVER_ERROR', 503, {'detail': str(e)})
