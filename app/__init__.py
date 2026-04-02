@@ -59,6 +59,10 @@ def create_app():
             'http://127.0.0.1:4500',
             'http://localhost:8080',
             'http://127.0.0.1:8080',
+            'http://pnec.opencodingsociety.com',
+            'https://pnec.opencodingsociety.com',
+            'https://open-coding-society.github.io',
+            'https://whitelunarium.github.io',
         ],
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     )
