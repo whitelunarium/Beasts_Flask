@@ -401,6 +401,7 @@ def _register_blueprints(app):
     2. Register with url_prefix
     """
     from app.routes.auth import auth_bp
+    from app.routes.legacy_user import legacy_user_bp
     from app.routes.faq import faq_bp
     from app.routes.neighborhoods import neighborhoods_bp
     from app.routes.risk import risk_bp
@@ -411,6 +412,7 @@ def _register_blueprints(app):
     from app.routes.admin import admin_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
+    app.register_blueprint(legacy_user_bp,   url_prefix='/api')
     app.register_blueprint(faq_bp,           url_prefix='/api')
     app.register_blueprint(neighborhoods_bp, url_prefix='/api')
     app.register_blueprint(risk_bp,          url_prefix='/api')
