@@ -411,6 +411,8 @@ def _register_blueprints(app):
     from app.routes.titanic import titanic_bp
     from app.routes.admin import admin_bp
     from app.routes.escape_room import escape_room_bp
+    from app.routes.gemini import gemini_bp
+    from app.routes.news import news_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -423,6 +425,8 @@ def _register_blueprints(app):
     app.register_blueprint(titanic_bp,       url_prefix='/api')
     app.register_blueprint(admin_bp,         url_prefix='/api/admin')
     app.register_blueprint(escape_room_bp,   url_prefix='/api')
+    app.register_blueprint(gemini_bp,        url_prefix='/api')
+    app.register_blueprint(news_bp,          url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):

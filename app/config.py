@@ -59,6 +59,11 @@ class Config:
     POWAY_LAT = 32.9628
     POWAY_LON = -117.0359
     RISK_CACHE_SECONDS = 1800  # 30 minutes
+    GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or None
+    GEMINI_MODEL = os.environ.get('GEMINI_MODEL') or 'gemini-2.5-flash'
+    GEMINI_API_URL = os.environ.get('GEMINI_API_URL') or 'https://generativelanguage.googleapis.com/v1beta'
+    GEMINI_RATE_LIMIT_PER_MINUTE = int(os.environ.get('GEMINI_RATE_LIMIT_PER_MINUTE') or 20)
+    REDIS_URL = os.environ.get('REDIS_URL') or None
 
 
 class DevelopmentConfig(Config):

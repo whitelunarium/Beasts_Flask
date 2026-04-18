@@ -32,6 +32,14 @@ MAIL_SERVER=
 MAIL_PORT=587
 MAIL_USERNAME=
 MAIL_PASSWORD=
+
+# Gemini proxy used by the PNEC helper chatbot
+GEMINI_API_KEY=your-gemini-api-key
+GEMINI_MODEL=gemini-2.5-flash
+GEMINI_RATE_LIMIT_PER_MINUTE=20
+
+# Optional but recommended in production so rate limits work across workers
+REDIS_URL=redis://localhost:6379/0
 ```
 
 ### Run
@@ -130,6 +138,11 @@ app/
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/risk` | — | Live Poway hazard assessment (fire/flood/heat) |
+
+### AI Helper — `/api`
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/gemini` | — | Server-side Gemini proxy for the PNEC helper chatbot |
 
 ### Neighborhoods — `/api`
 | Method | Path | Auth | Description |
