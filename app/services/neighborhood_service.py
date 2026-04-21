@@ -1,6 +1,11 @@
 # app/services/neighborhood_service.py
 # Responsibility: Neighborhood business logic — fetch, seed, and address lookup.
 
+import json
+
+import requests
+from flask import current_app
+
 from app import db
 from app.models.neighborhood import Neighborhood
 
@@ -47,6 +52,243 @@ def lookup_neighborhood_by_name(query_text):
             matches.insert(0, number_match)
 
     return [n.to_dict() for n in matches]
+
+
+def lookup_neighborhood(query_text=None, lat=None, lng=None):
+    """
+    Purpose: Locate a neighborhood by GPS point, street address, name, or number.
+    @param {str|None} query_text - Address, neighborhood name, or neighborhood number
+    @param {float|None} lat - Latitude from browser GPS or geocoding
+    @param {float|None} lng - Longitude from browser GPS or geocoding
+    @returns {dict} Lookup result with one matching neighborhood or search results
+    Algorithm:
+    1. If latitude/longitude are provided, match them against neighborhood polygons
+    2. If an address is provided, geocode it and match the geocoded point
+    3. Fall back to existing name/number search
+    """
+    point = _coerce_point(lat, lng)
+    if point:
+        neighborhood = find_neighborhood_containing_point(point[0], point[1])
+        return {
+            'neighborhood': neighborhood.to_dict() if neighborhood else None,
+            'results': [neighborhood.to_dict()] if neighborhood else [],
+            'coordinates': {'lat': point[0], 'lng': point[1]},
+            'source': 'coordinates',
+        }
+
+    query_text = (query_text or '').strip()
+    if query_text:
+        geocoded_point = geocode_address(query_text)
+        if geocoded_point:
+            neighborhood = find_neighborhood_containing_point(
+                geocoded_point['lat'],
+                geocoded_point['lng'],
+            )
+            if neighborhood:
+                return {
+                    'neighborhood': neighborhood.to_dict(),
+                    'results': [neighborhood.to_dict()],
+                    'coordinates': geocoded_point,
+                    'source': 'geocoded_address',
+                }
+
+        results = lookup_neighborhood_by_name(query_text)
+        return {
+            'neighborhood': results[0] if len(results) == 1 else None,
+            'results': results,
+            'coordinates': geocoded_point,
+            'source': 'name_or_number',
+        }
+
+    return {'neighborhood': None, 'results': [], 'coordinates': None, 'source': None}
+
+
+def find_neighborhood_containing_point(lat, lng):
+    """
+    Purpose: Return the first neighborhood whose polygon contains a point.
+    @param {float} lat - Latitude
+    @param {float} lng - Longitude
+    @returns {Neighborhood|None} Matching neighborhood row
+    """
+    neighborhoods = Neighborhood.query.filter(
+        Neighborhood.polygon_coords_json.isnot(None),
+        Neighborhood.polygon_coords_json != '',
+    ).order_by(Neighborhood.number).all()
+
+    for neighborhood in neighborhoods:
+        if _neighborhood_contains_point(neighborhood, lat, lng):
+            return neighborhood
+
+    return None
+
+
+def geocode_address(address):
+    """
+    Purpose: Convert a Poway-area street address into latitude/longitude.
+    Uses the public US Census geocoder, which does not require an API key.
+    """
+    if not address or len(address.strip()) < 3:
+        return None
+
+    query = address.strip()
+    if 'poway' not in query.lower():
+        query = f'{query}, Poway, CA'
+
+    try:
+        response = requests.get(
+            'https://geocoding.geo.census.gov/geocoder/locations/onelineaddress',
+            params={
+                'address': query,
+                'benchmark': 'Public_AR_Current',
+                'format': 'json',
+            },
+            headers={'User-Agent': 'PNEC neighborhood lookup'},
+            timeout=4,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        current_app.logger.warning('Address geocoding failed: %s', exc)
+        return None
+
+    matches = data.get('result', {}).get('addressMatches', [])
+    if not matches:
+        return None
+
+    coordinates = matches[0].get('coordinates') or {}
+    lat = coordinates.get('y')
+    lng = coordinates.get('x')
+    point = _coerce_point(lat, lng)
+    if not point:
+        return None
+
+    return {'lat': point[0], 'lng': point[1], 'matched_address': matches[0].get('matchedAddress')}
+
+
+def _coerce_point(lat, lng):
+    try:
+        lat = float(lat)
+        lng = float(lng)
+    except (TypeError, ValueError):
+        return None
+
+    if not (-90 <= lat <= 90 and -180 <= lng <= 180):
+        return None
+
+    return lat, lng
+
+
+def _neighborhood_contains_point(neighborhood, lat, lng):
+    polygons = _parse_polygon_coords(neighborhood.polygon_coords_json)
+    for polygon in polygons:
+        if not polygon:
+            continue
+
+        outer_ring = polygon[0]
+        hole_rings = polygon[1:]
+        if _point_in_ring(lat, lng, outer_ring) and not any(
+            _point_in_ring(lat, lng, hole) for hole in hole_rings
+        ):
+            return True
+
+    return False
+
+
+def _parse_polygon_coords(raw_coords):
+    """
+    Purpose: Normalize stored polygon JSON into [polygon][ring][lat,lng].
+    Supports plain [[lat,lng], ...], [[[lat,lng], ...]], and GeoJSON
+    Polygon/MultiPolygon coordinate objects.
+    """
+    if not raw_coords:
+        return []
+
+    try:
+        parsed = json.loads(raw_coords) if isinstance(raw_coords, str) else raw_coords
+    except (TypeError, ValueError):
+        return []
+
+    if isinstance(parsed, dict):
+        geometry = parsed.get('geometry') if parsed.get('type') == 'Feature' else parsed
+        geo_type = geometry.get('type')
+        coords = geometry.get('coordinates')
+        if geo_type == 'Polygon':
+            return [_normalize_geojson_polygon(coords)]
+        if geo_type == 'MultiPolygon':
+            return [_normalize_geojson_polygon(polygon) for polygon in coords or []]
+        return []
+
+    return _normalize_plain_polygon(parsed)
+
+
+def _normalize_geojson_polygon(coords):
+    return [[_lon_lat_to_lat_lng(point) for point in ring] for ring in coords or []]
+
+
+def _normalize_plain_polygon(coords):
+    if not isinstance(coords, list) or not coords:
+        return []
+
+    if _looks_like_coordinate(coords[0]):
+        ring = [_coerce_coordinate(point) for point in coords if _coerce_coordinate(point)]
+        return [[ring]]
+
+    if coords and isinstance(coords[0], list) and coords[0] and _looks_like_coordinate(coords[0][0]):
+        rings = [[_coerce_coordinate(point) for point in ring if _coerce_coordinate(point)] for ring in coords]
+        return [rings]
+
+    return []
+
+
+def _looks_like_coordinate(value):
+    return isinstance(value, (list, tuple)) and len(value) >= 2
+
+
+def _coerce_coordinate(point):
+    try:
+        lat = float(point[0])
+        lng = float(point[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    if -90 <= lat <= 90 and -180 <= lng <= 180:
+        return lat, lng
+
+    return None
+
+
+def _lon_lat_to_lat_lng(point):
+    try:
+        lng = float(point[0])
+        lat = float(point[1])
+    except (TypeError, ValueError, IndexError):
+        return None
+
+    if -90 <= lat <= 90 and -180 <= lng <= 180:
+        return lat, lng
+
+    return None
+
+
+def _point_in_ring(lat, lng, ring):
+    clean_ring = [point for point in ring if point]
+    if len(clean_ring) < 3:
+        return False
+
+    inside = False
+    j = len(clean_ring) - 1
+
+    for i, point in enumerate(clean_ring):
+        yi, xi = point
+        yj, xj = clean_ring[j]
+        intersects = ((yi > lat) != (yj > lat)) and (
+            lng < (xj - xi) * (lat - yi) / ((yj - yi) or 1e-12) + xi
+        )
+        if intersects:
+            inside = not inside
+        j = i
+
+    return inside
 
 
 def seed_neighborhoods():

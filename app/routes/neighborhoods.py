@@ -1,5 +1,5 @@
 # app/routes/neighborhoods.py
-# Responsibility: Neighborhood API endpoints — list, detail, lookup by name.
+# Responsibility: Neighborhood API endpoints — list, detail, lookup by point/address/name.
 
 from flask import Blueprint, request, jsonify
 from app.services import neighborhood_service
@@ -26,7 +26,9 @@ def get_neighborhood(neighborhood_id):
 
 @neighborhoods_bp.route('/neighborhoods/lookup', methods=['GET'])
 def lookup_neighborhood():
-    """Search neighborhoods by name or number. Used by map search bar."""
+    """Find a neighborhood by GPS point, street address, name, or number."""
     address = request.args.get('address', '').strip()
-    results = neighborhood_service.lookup_neighborhood_by_name(address)
-    return jsonify({'results': results}), 200
+    lat = request.args.get('lat')
+    lng = request.args.get('lng')
+    result = neighborhood_service.lookup_neighborhood(address, lat=lat, lng=lng)
+    return jsonify(result), 200
