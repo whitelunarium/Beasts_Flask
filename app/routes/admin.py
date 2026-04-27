@@ -172,6 +172,51 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
       background: rgba(114,175,47,0.15);
       border: 1px solid rgba(114,175,47,0.35);
     }
+    .status-badge {
+      display: inline-block;
+      min-width: 76px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      text-align: center;
+    }
+    .status-active {
+      color: #dff8e8;
+      background: rgba(39,174,96,0.16);
+      border: 1px solid rgba(39,174,96,0.45);
+    }
+    .status-inactive {
+      color: #ffd8d1;
+      background: rgba(192,57,43,0.16);
+      border: 1px solid rgba(192,57,43,0.45);
+    }
+    tr.inactive-row td {
+      color: #aab6c7;
+      background: rgba(255,255,255,0.025);
+    }
+    .filters {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 16px;
+    }
+    .filters a {
+      display: inline-block;
+      padding: 8px 12px;
+      border-radius: 999px;
+      color: var(--text);
+      text-decoration: none;
+      border: 1px solid var(--line);
+      background: rgba(255,255,255,0.04);
+      font-weight: 700;
+      font-size: 0.86rem;
+    }
+    .filters a.active {
+      background: var(--accent);
+      color: white;
+      border-color: var(--accent);
+    }
     @media (max-width: 900px) {
       body { padding: 12px; }
       .panel { overflow-x: auto; }
@@ -191,7 +236,12 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
         <a href="{{ url_for('admin.admin_logout_page') }}">Logout</a>
       </div>
     </div>
-    <p class="meta">Signed in as {{ current_user.email }}. Total accounts: {{ users|length }}</p>
+    <p class="meta">Signed in as {{ current_user.email }}. Total accounts: {{ total_count }} · Active: {{ active_count }} · Inactive: {{ inactive_count }}</p>
+    <nav class="filters" aria-label="Account status filters">
+      <a href="{{ url_for('admin.admin_accounts_page') }}" class="{{ 'active' if status_filter == 'all' else '' }}">All</a>
+      <a href="{{ url_for('admin.admin_accounts_page', status='active') }}" class="{{ 'active' if status_filter == 'active' else '' }}">Active</a>
+      <a href="{{ url_for('admin.admin_accounts_page', status='inactive') }}" class="{{ 'active' if status_filter == 'inactive' else '' }}">Inactive</a>
+    </nav>
     <section class="panel">
       <table>
         <thead>
@@ -206,13 +256,22 @@ _ADMIN_ACCOUNTS_TEMPLATE = """
           </tr>
         </thead>
         <tbody>
-          {% for user in users %}
+          {% if not users %}
           <tr>
+            <td colspan="7" style="text-align:center;color:var(--muted);padding:28px;">No accounts match this filter.</td>
+          </tr>
+          {% endif %}
+          {% for user in users %}
+          <tr class="{{ 'inactive-row' if not user.is_active else '' }}">
             <td>{{ user.id }}</td>
             <td>{{ user.email }}</td>
             <td>{{ user.display_name }}</td>
             <td><span class="role">{{ user.role }}</span></td>
-            <td>{{ 'Yes' if user.is_active else 'No' }}</td>
+            <td>
+              <span class="status-badge {{ 'status-active' if user.is_active else 'status-inactive' }}">
+                {{ 'Active' if user.is_active else 'Inactive' }}
+              </span>
+            </td>
             <td>{{ user.neighborhood_id if user.neighborhood_id is not none else '—' }}</td>
             <td>{{ user.created_at.strftime('%Y-%m-%d %H:%M:%S') if user.created_at else '—' }}</td>
           </tr>
@@ -400,8 +459,30 @@ def admin_accounts_page():
         logout_user()
         return redirect(url_for('admin.admin_login_page', next=request.path))
 
-    users = User.query.order_by(User.created_at.desc()).all()
-    return render_template_string(_ADMIN_ACCOUNTS_TEMPLATE, users=users, current_user=current_user)
+    status_filter = (request.args.get('status') or 'all').strip().lower()
+    if status_filter not in ('all', 'active', 'inactive'):
+        status_filter = 'all'
+
+    query = User.query
+    if status_filter == 'active':
+        query = query.filter_by(is_active=True)
+    elif status_filter == 'inactive':
+        query = query.filter_by(is_active=False)
+
+    users = query.order_by(User.created_at.desc()).all()
+    total_count = User.query.count()
+    active_count = User.query.filter_by(is_active=True).count()
+    inactive_count = User.query.filter_by(is_active=False).count()
+
+    return render_template_string(
+        _ADMIN_ACCOUNTS_TEMPLATE,
+        users=users,
+        current_user=current_user,
+        status_filter=status_filter,
+        total_count=total_count,
+        active_count=active_count,
+        inactive_count=inactive_count,
+    )
 
 
 @admin_bp.route('/operations', methods=['GET'])
