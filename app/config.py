@@ -3,6 +3,7 @@
 # Environment variables override defaults for production deployments.
 
 import os
+from datetime import timedelta
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -16,6 +17,8 @@ class Config:
     SESSION_COOKIE_NAME = 'pnec_session'
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = 'Lax'
+    PERMANENT_SESSION_LIFETIME = timedelta(days=30)
+    REMEMBER_COOKIE_DURATION = timedelta(days=30)
     JWT_TOKEN_NAME = 'pnec_jwt'
 
     # ─── Database ─────────────────────────────────────────────────────────────
@@ -30,7 +33,10 @@ class Config:
         pw = os.environ.get('DB_PASSWORD')
         if ep and un and pw:
             return f'mysql+pymysql://{un}:{pw}@{ep}:3306/pnec'
-        return 'sqlite:///volumes/pnec.db'
+        # Absolute path so Flask works regardless of CWD
+        base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        db_path = os.path.join(base, 'instance', 'volumes', 'pnec.db')
+        return f'sqlite:///{db_path}'
 
     SQLALCHEMY_DATABASE_URI = build_db_uri.__func__()
     SQLALCHEMY_BACKUP_URI = 'sqlite:///volumes/pnec_bak.db'

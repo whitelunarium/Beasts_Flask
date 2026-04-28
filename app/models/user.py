@@ -1,6 +1,7 @@
 # app/models/user.py
 # Responsibility: User database model — authentication, roles, and profile data.
 
+import secrets
 from datetime import datetime
 from flask_login import UserMixin
 from app import db
@@ -21,6 +22,14 @@ class User(UserMixin, db.Model):
     role            = db.Column(db.String(20),  nullable=False, default='resident')
     is_active       = db.Column(db.Boolean,     nullable=False, default=True)
     created_at      = db.Column(db.DateTime,    nullable=False, default=datetime.utcnow)
+    bio             = db.Column(db.Text,        nullable=True)
+    avatar_url      = db.Column(db.Text,        nullable=True)
+    phone           = db.Column(db.String(20),  nullable=True)
+    auth_token      = db.Column(db.String(64),  nullable=True, unique=True, index=True)
+
+    def generate_token(self):
+        self.auth_token = secrets.token_hex(32)
+        return self.auth_token
 
     # Relationships
     neighborhood    = db.relationship('Neighborhood', back_populates='residents', foreign_keys=[neighborhood_id])
@@ -55,6 +64,9 @@ class User(UserMixin, db.Model):
             'neighborhood_id': self.neighborhood_id,
             'is_active':       self.is_active,
             'created_at':      self.created_at.isoformat(),
+            'bio':             self.bio,
+            'avatar_url':      self.avatar_url,
+            'phone':           self.phone,
         }
 
     def __repr__(self):

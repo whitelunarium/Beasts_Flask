@@ -5,7 +5,7 @@
 from flask import Flask, jsonify, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
-from flask_login import LoginManager
+from flask_login import LoginManager, current_user
 from flask_cors import CORS
 
 try:
@@ -380,6 +380,17 @@ def create_app():
         """Return a simple machine-readable health payload."""
         return jsonify({'status': 'ok', 'message': 'Flask backend is running', 'port': app.config.get('FLASK_PORT', 8425)}), 200
 
+    # ── Bearer token → Flask-Login session bridge ─────────────────────────────
+    @app.before_request
+    def _load_user_from_bearer():
+        """If the request carries a valid Bearer token and no session, log in that user."""
+        from flask_login import login_user
+        if not current_user.is_authenticated:
+            from app.utils.auth_helpers import get_token_user
+            token_user = get_token_user()
+            if token_user:
+                login_user(token_user, remember=False)
+
     # ── Register blueprints ───────────────────────────────────────────────────
     _register_blueprints(app)
 
@@ -413,6 +424,9 @@ def _register_blueprints(app):
     from app.routes.escape_room import escape_room_bp
     from app.routes.gemini import gemini_bp
     from app.routes.news import news_bp
+    from app.routes.announcement import announcements_bp
+    from app.routes.site_config import site_config_bp
+    from app.routes.blog import blog_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -427,6 +441,9 @@ def _register_blueprints(app):
     app.register_blueprint(escape_room_bp,   url_prefix='/api')
     app.register_blueprint(gemini_bp,        url_prefix='/api')
     app.register_blueprint(news_bp,          url_prefix='/api')
+    app.register_blueprint(announcements_bp, url_prefix='/api')
+    app.register_blueprint(site_config_bp,   url_prefix='/api')
+    app.register_blueprint(blog_bp,          url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
@@ -467,9 +484,18 @@ def _seed_initial_data():
     from app.services.neighborhood_service import seed_neighborhoods
     from app.services.faq_service import seed_faq
     from app.services.operations_service import seed_operations_data
+    from app.routes.site_config import seed_site_config
     seed_neighborhoods()
     seed_faq()
     seed_operations_data()
+    seed_site_config()
+
+
+# ── Flask-Login: return JSON 401 instead of HTML redirect ─────────────────────
+@login_manager.unauthorized_handler
+def unauthorized():
+    from flask import jsonify
+    return jsonify({'error': 'UNAUTHORIZED', 'message': 'Login required.'}), 401
 
 
 # ── Flask-Login user loader ────────────────────────────────────────────────────
