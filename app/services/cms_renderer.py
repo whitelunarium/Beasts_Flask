@@ -28,6 +28,9 @@ def render_section(section_id, section_data, registry):
     type_id = (section_data or {}).get('type')
     settings = (section_data or {}).get('settings') or {}
     visible = bool((section_data or {}).get('visible', True))
+    device_visibility = (section_data or {}).get('device_visibility')
+    if device_visibility is None:
+        device_visibility = ['desktop', 'tablet', 'mobile']
     blocks = (section_data or {}).get('blocks') or {}
     block_order = (section_data or {}).get('block_order') or []
     ordered_blocks = [
@@ -38,7 +41,8 @@ def render_section(section_id, section_data, registry):
     entry = registry.get(type_id)
     if not entry:
         return _wrap(section_id, type_id or 'unknown', visible,
-                     f'<!-- cms: unknown section type {html_escape(str(type_id))} -->')
+                     f'<!-- cms: unknown section type {html_escape(str(type_id))} -->',
+                     device_visibility)
 
     try:
         template = _env.from_string(entry['template_source'])
@@ -55,12 +59,22 @@ def render_section(section_id, section_data, registry):
     if not visible:
         body = f'<!-- cms: section hidden -->{body}'
 
-    return _wrap(section_id, type_id, visible, body)
+    return _wrap(section_id, type_id, visible, body, device_visibility)
 
 
-def _wrap(section_id, type_id, visible, body):
+def _wrap(section_id, type_id, visible, body, device_visibility=None):
+    """Wrap rendered section body in stable container with editor data attrs.
+    device_visibility: list of {'desktop','tablet','mobile'} allowed devices; if a
+    device is missing the section gets a CSS class that hides it at that breakpoint.
+    """
+    classes = ['cms-section']
+    if isinstance(device_visibility, list) and len(device_visibility) > 0:
+        if 'desktop' not in device_visibility: classes.append('cms-hide-desktop')
+        if 'tablet'  not in device_visibility: classes.append('cms-hide-tablet')
+        if 'mobile'  not in device_visibility: classes.append('cms-hide-mobile')
     return (
         f'<div id="cms-section-{html_escape(str(section_id))}"'
+        f' class="{" ".join(classes)}"'
         f' data-cms-section-id="{html_escape(str(section_id))}"'
         f' data-cms-section-type="{html_escape(str(type_id))}"'
         f' data-cms-section-visible="{ "true" if visible else "false" }">'

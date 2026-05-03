@@ -440,6 +440,8 @@ def _register_blueprints(app):
     from app.routes.page_overrides import page_overrides_bp
     from app.routes.cms_manifest import cms_manifest_bp
     from app.routes.cms_v2 import cms_v2_bp
+    from app.routes.cms_theme import cms_theme_bp
+    from app.routes.cms_ai import cms_ai_bp
     from app.routes.chat import chat_bp
     from app.routes.push import push_bp
 
@@ -463,6 +465,8 @@ def _register_blueprints(app):
     app.register_blueprint(page_overrides_bp, url_prefix='/api')
     app.register_blueprint(cms_manifest_bp,   url_prefix='/api')
     app.register_blueprint(cms_v2_bp,         url_prefix='/api')
+    app.register_blueprint(cms_theme_bp,      url_prefix='/api')
+    app.register_blueprint(cms_ai_bp,         url_prefix='/api')
     app.register_blueprint(chat_bp,           url_prefix='/api')
     app.register_blueprint(push_bp,           url_prefix='/api')
 

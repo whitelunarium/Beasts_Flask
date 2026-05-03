@@ -1,0 +1,25 @@
+{
+  "type": "card_list",
+  "label": "Card List",
+  "category": "content",
+  "description": "A row of cards with an icon/image, heading, and description. Great for program tiles or feature highlights.",
+  "settings": [
+    { "id": "heading", "type": "text",   "label": "Heading", "default": "Our programs" },
+    { "id": "description", "type": "richtext", "label": "Description" },
+    { "id": "columns", "type": "select", "label": "Columns", "options": ["2", "3", "4"], "default": "3" }
+  ],
+  "blocks": [
+    {
+      "type": "card",
+      "label": "Card",
+      "settings": [
+        { "id": "icon",      "type": "text",     "label": "Icon (emoji)", "default": "🛟" },
+        { "id": "image_url", "type": "image",    "label": "Image (optional)" },
+        { "id": "heading",   "type": "text",     "label": "Heading", "default": "Program name" },
+        { "id": "body",      "type": "richtext", "label": "Body", "default": "Describe the program here." },
+        { "id": "cta_label", "type": "text",     "label": "Button label" },
+        { "id": "cta_url",   "type": "url",      "label": "Button link" }
+      ]
+    }
+  ]
+}

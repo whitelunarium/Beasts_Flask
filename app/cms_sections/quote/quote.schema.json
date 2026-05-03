@@ -1,0 +1,12 @@
+{
+  "type": "quote",
+  "label": "Quote / Testimonial",
+  "category": "content",
+  "description": "A featured quote or testimonial from a community member or partner.",
+  "settings": [
+    { "id": "quote",     "type": "richtext", "label": "Quote", "default": "Knowing my neighbors made all the difference during the wildfire." },
+    { "id": "attribution", "type": "text", "label": "Attribution", "default": "Sarah, Poway resident" },
+    { "id": "image_url", "type": "image", "label": "Photo (optional)" },
+    { "id": "alignment", "type": "select", "label": "Alignment", "options": ["left", "center"], "default": "center" }
+  ]
+}

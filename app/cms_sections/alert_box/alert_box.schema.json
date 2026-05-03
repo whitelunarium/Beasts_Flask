@@ -1,0 +1,13 @@
+{
+  "type": "alert_box",
+  "label": "Alert Box",
+  "category": "headers",
+  "description": "A colored alert/notice. Use for evacuation warnings, red-flag days, or important announcements.",
+  "settings": [
+    { "id": "level",   "type": "select", "label": "Severity", "options": ["red", "amber", "green", "info"], "default": "amber" },
+    { "id": "icon",    "type": "text",   "label": "Icon (emoji)", "default": "⚠" },
+    { "id": "message", "type": "richtext", "label": "Message", "default": "Stay alert. Follow Poway Fire Dept guidance." },
+    { "id": "cta_label", "type": "text", "label": "Button label" },
+    { "id": "cta_url",   "type": "url",  "label": "Button link" }
+  ]
+}

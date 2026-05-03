@@ -254,6 +254,16 @@ def patch_page_draft(page_slug):
             section['visible'] = bool(patch.get('visible', True))
             affected.add(sid)
 
+        elif op == 'device_visibility':
+            sid = patch.get('sid')
+            section = template['sections'].get(sid)
+            if section is None:
+                continue
+            devices = patch.get('devices') or ['desktop', 'tablet', 'mobile']
+            allowed = {'desktop', 'tablet', 'mobile'}
+            section['device_visibility'] = [d for d in devices if d in allowed]
+            affected.add(sid)
+
         elif op == 'add_block':
             sid = patch.get('sid')
             section = template['sections'].get(sid)

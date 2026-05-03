@@ -1,0 +1,13 @@
+{
+  "type": "two_column",
+  "label": "Two Columns",
+  "category": "layout",
+  "description": "Two side-by-side text columns. Good for comparison content or grouping related information.",
+  "settings": [
+    { "id": "heading", "type": "text", "label": "Section heading" },
+    { "id": "left_heading", "type": "text", "label": "Left column heading", "default": "Left column" },
+    { "id": "left_body",    "type": "richtext", "label": "Left column body", "default": "Add your content here." },
+    { "id": "right_heading", "type": "text", "label": "Right column heading", "default": "Right column" },
+    { "id": "right_body",    "type": "richtext", "label": "Right column body", "default": "Add your content here." }
+  ]
+}
