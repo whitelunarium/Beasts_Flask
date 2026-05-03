@@ -96,9 +96,10 @@ def list_pages():
         if updated_at and (not entry['updated_at'] or updated_at > entry['updated_at']):
             entry['updated_at'] = updated_at
     pages = sorted(by_slug.values(), key=lambda p: p['page_slug'])
-    # Always include the canonical built-in pages even if empty
+    # Always include the canonical built-in pages + header/footer section
+    # groups even if empty
     seen = {p['page_slug'] for p in pages}
-    for canon in ('home', 'about', 'programs'):
+    for canon in ('home', 'about', 'programs', '_header', '_footer'):
         if canon not in seen:
             pages.append({'page_slug': canon, 'has_draft': False,
                           'has_published': False, 'updated_at': None})
