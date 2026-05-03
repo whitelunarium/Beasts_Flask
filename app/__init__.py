@@ -7,6 +7,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import LoginManager, current_user
 from flask_cors import CORS
+from sqlalchemy import inspect, text
 
 try:
     from flask_mail import Mail
@@ -406,6 +407,7 @@ def create_app():
     # ── Create tables + seed on first run ─────────────────────────────────────
     with app.app_context():
         db.create_all()
+        _sync_legacy_sqlite_schema()
         _seed_admin_if_missing(app)
         _seed_initial_data()
 
@@ -433,17 +435,11 @@ def _register_blueprints(app):
     from app.routes.escape_room import escape_room_bp
     from app.routes.gemini import gemini_bp
     from app.routes.news import news_bp
-    from app.routes.announcement import announcements_bp
-    from app.routes.site_config import site_config_bp
     from app.routes.blog import blog_bp
-    from app.routes.page_sections import page_sections_bp
-    from app.routes.page_overrides import page_overrides_bp
     from app.routes.cms_manifest import cms_manifest_bp
     from app.routes.cms_v2 import cms_v2_bp
     from app.routes.cms_theme import cms_theme_bp
     from app.routes.cms_ai import cms_ai_bp
-    from app.routes.chat import chat_bp
-    from app.routes.push import push_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -458,17 +454,11 @@ def _register_blueprints(app):
     app.register_blueprint(escape_room_bp,   url_prefix='/api')
     app.register_blueprint(gemini_bp,        url_prefix='/api')
     app.register_blueprint(news_bp,          url_prefix='/api')
-    app.register_blueprint(announcements_bp, url_prefix='/api')
-    app.register_blueprint(site_config_bp,   url_prefix='/api')
     app.register_blueprint(blog_bp,          url_prefix='/api')
-    app.register_blueprint(page_sections_bp,  url_prefix='/api')
-    app.register_blueprint(page_overrides_bp, url_prefix='/api')
     app.register_blueprint(cms_manifest_bp,   url_prefix='/api')
     app.register_blueprint(cms_v2_bp,         url_prefix='/api')
     app.register_blueprint(cms_theme_bp,      url_prefix='/api')
     app.register_blueprint(cms_ai_bp,         url_prefix='/api')
-    app.register_blueprint(chat_bp,           url_prefix='/api')
-    app.register_blueprint(push_bp,           url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
@@ -498,6 +488,38 @@ def _seed_admin_if_missing(app):
     db.session.commit()
 
 
+def _sync_legacy_sqlite_schema():
+    """
+    Purpose: Patch older local SQLite schemas so current models can query safely.
+    Algorithm:
+    1. Skip non-SQLite databases
+    2. Inspect the existing users table
+    3. Add missing columns introduced after the table was first created
+    """
+    engine = db.engine
+    if engine.dialect.name != 'sqlite':
+        return
+
+    inspector = inspect(engine)
+    tables = set(inspector.get_table_names())
+    if 'users' not in tables:
+        return
+
+    existing_columns = {col['name'] for col in inspector.get_columns('users')}
+    missing_columns = [
+        ('bio', 'ALTER TABLE users ADD COLUMN bio TEXT'),
+        ('avatar_url', 'ALTER TABLE users ADD COLUMN avatar_url TEXT'),
+        ('phone', 'ALTER TABLE users ADD COLUMN phone VARCHAR(20)'),
+        ('auth_token', 'ALTER TABLE users ADD COLUMN auth_token VARCHAR(64)'),
+    ]
+
+    for column_name, ddl in missing_columns:
+        if column_name not in existing_columns:
+            db.session.execute(text(ddl))
+
+    db.session.commit()
+
+
 def _seed_initial_data():
     """
     Purpose: Seed neighborhoods and FAQ data on first run.
@@ -509,11 +531,9 @@ def _seed_initial_data():
     from app.services.neighborhood_service import seed_neighborhoods
     from app.services.faq_service import seed_faq
     from app.services.operations_service import seed_operations_data
-    from app.routes.site_config import seed_site_config
     seed_neighborhoods()
     seed_faq()
     seed_operations_data()
-    seed_site_config()
 
 
 # ── Flask-Login: return JSON 401 instead of HTML redirect ─────────────────────
