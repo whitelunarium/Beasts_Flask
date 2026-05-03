@@ -254,6 +254,17 @@ def patch_page_draft(page_slug):
             section['visible'] = bool(patch.get('visible', True))
             affected.add(sid)
 
+        elif op == 'replace_template':
+            # Wholesale replace the draft template (used by undo/redo).
+            new_t = patch.get('template') or {}
+            if not isinstance(new_t, dict):
+                return error_response('VALIDATION_FAILED', 400, {'detail': 'template must be an object'})
+            new_t.setdefault('sections', {})
+            new_t.setdefault('order', [])
+            template['sections'] = new_t['sections']
+            template['order']    = new_t['order']
+            affected.update(new_t['sections'].keys())
+
         elif op == 'device_visibility':
             sid = patch.get('sid')
             section = template['sections'].get(sid)

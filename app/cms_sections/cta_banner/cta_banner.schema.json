@@ -10,5 +10,29 @@
     { "id": "cta_url",        "type": "url",    "label": "Button link", "default": "#" },
     { "id": "background",     "type": "select", "label": "Background", "options": ["primary", "accent", "alert_red", "alert_amber"], "default": "primary" },
     { "id": "text_alignment", "type": "select", "label": "Text alignment", "options": ["left", "center", "right"], "default": "center" }
+  ],
+  "presets": [
+    {
+      "name": "Volunteer Signup",
+      "settings": {
+        "heading": "Volunteer with PNEC",
+        "sub_heading": "Help your neighbors prepare for emergencies.",
+        "cta_label": "Email volunteer@powaynec.com",
+        "cta_url": "mailto:volunteer@powaynec.com",
+        "background": "primary",
+        "text_alignment": "center"
+      }
+    },
+    {
+      "name": "Donation CTA",
+      "settings": {
+        "heading": "Support PNEC",
+        "sub_heading": "We're a 501(c)(3) — every dollar funds Block Parties, training, and outreach.",
+        "cta_label": "Donate",
+        "cta_url": "#donate",
+        "background": "accent",
+        "text_alignment": "center"
+      }
+    }
   ]
 }
