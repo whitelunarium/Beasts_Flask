@@ -43,6 +43,7 @@ def render_section(section_id, section_data, registry):
     device_visibility = (section_data or {}).get('device_visibility')
     if device_visibility is None:
         device_visibility = ['desktop', 'tablet', 'mobile']
+    layout = (section_data or {}).get('layout') or {}
     blocks = (section_data or {}).get('blocks') or {}
     block_order = (section_data or {}).get('block_order') or []
     ordered_blocks = [
@@ -54,7 +55,7 @@ def render_section(section_id, section_data, registry):
     if not entry:
         return _wrap(section_id, type_id or 'unknown', visible,
                      f'<!-- cms: unknown section type {html_escape(str(type_id))} -->',
-                     device_visibility)
+                     device_visibility, layout)
 
     try:
         template = _env.from_string(entry['template_source'])
@@ -71,25 +72,41 @@ def render_section(section_id, section_data, registry):
     if not visible:
         body = f'<!-- cms: section hidden -->{body}'
 
-    return _wrap(section_id, type_id, visible, body, device_visibility)
+    return _wrap(section_id, type_id, visible, body, device_visibility, layout)
 
 
-def _wrap(section_id, type_id, visible, body, device_visibility=None):
+def _wrap(section_id, type_id, visible, body, device_visibility=None, layout=None):
     """Wrap rendered section body in stable container with editor data attrs.
-    device_visibility: list of {'desktop','tablet','mobile'} allowed devices; if a
-    device is missing the section gets a CSS class that hides it at that breakpoint.
+    device_visibility: list of {'desktop','tablet','mobile'} allowed devices.
+    layout: optional dict with per-instance spacing + background overrides:
+      { padding_top, padding_bottom, background_color, background_image,
+        text_color, max_width }.
     """
     classes = ['cms-section']
     if isinstance(device_visibility, list) and len(device_visibility) > 0:
         if 'desktop' not in device_visibility: classes.append('cms-hide-desktop')
         if 'tablet'  not in device_visibility: classes.append('cms-hide-tablet')
         if 'mobile'  not in device_visibility: classes.append('cms-hide-mobile')
+
+    style_parts = []
+    if isinstance(layout, dict):
+        if layout.get('padding_top'):       style_parts.append(f'padding-top:{html_escape(str(layout["padding_top"]))}')
+        if layout.get('padding_bottom'):    style_parts.append(f'padding-bottom:{html_escape(str(layout["padding_bottom"]))}')
+        if layout.get('background_color'):  style_parts.append(f'background-color:{html_escape(str(layout["background_color"]))}')
+        if layout.get('background_image'):
+            url = html_escape(str(layout['background_image'])).replace('"', '%22')
+            style_parts.append(f'background-image:url("{url}");background-size:cover;background-position:center')
+        if layout.get('text_color'):        style_parts.append(f'color:{html_escape(str(layout["text_color"]))}')
+        if layout.get('max_width'):         style_parts.append(f'max-width:{html_escape(str(layout["max_width"]))};margin-left:auto;margin-right:auto')
+    style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ''
+
     return (
         f'<div id="cms-section-{html_escape(str(section_id))}"'
         f' class="{" ".join(classes)}"'
         f' data-cms-section-id="{html_escape(str(section_id))}"'
         f' data-cms-section-type="{html_escape(str(type_id))}"'
-        f' data-cms-section-visible="{ "true" if visible else "false" }">'
+        f' data-cms-section-visible="{ "true" if visible else "false" }"'
+        f'{style_attr}>'
         f'{body}</div>'
     )
 

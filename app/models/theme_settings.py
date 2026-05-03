@@ -43,6 +43,15 @@ DEFAULT_TOKENS = {
     # Brand
     'logo_url':              '',
     'site_name':             'Poway Neighborhood Emergency Corps',
+    # Named color schemes (Shopify-style: sections reference these by name)
+    'scheme_1_bg':           '#ffffff',
+    'scheme_1_text':         '#1e293b',
+    'scheme_2_bg':           '#1e3a8a',
+    'scheme_2_text':         '#ffffff',
+    'scheme_3_bg':           '#f59e0b',
+    'scheme_3_text':         '#1f2937',
+    'scheme_4_bg':           '#dc2626',
+    'scheme_4_text':         '#ffffff',
 }
 
 
@@ -70,6 +79,14 @@ TOKEN_META = {
     'max_width_content':   {'label': 'Content max width',     'type': 'text',   'group': 'layout'},
     'logo_url':            {'label': 'Logo image',            'type': 'image',  'group': 'brand'},
     'site_name':           {'label': 'Site name',             'type': 'text',   'group': 'brand'},
+    'scheme_1_bg':         {'label': 'Scheme 1 — Background', 'type': 'color',  'group': 'schemes'},
+    'scheme_1_text':       {'label': 'Scheme 1 — Text',       'type': 'color',  'group': 'schemes'},
+    'scheme_2_bg':         {'label': 'Scheme 2 — Background', 'type': 'color',  'group': 'schemes'},
+    'scheme_2_text':       {'label': 'Scheme 2 — Text',       'type': 'color',  'group': 'schemes'},
+    'scheme_3_bg':         {'label': 'Scheme 3 — Background', 'type': 'color',  'group': 'schemes'},
+    'scheme_3_text':       {'label': 'Scheme 3 — Text',       'type': 'color',  'group': 'schemes'},
+    'scheme_4_bg':         {'label': 'Scheme 4 — Background', 'type': 'color',  'group': 'schemes'},
+    'scheme_4_text':       {'label': 'Scheme 4 — Text',       'type': 'color',  'group': 'schemes'},
 }
 
 

@@ -383,6 +383,22 @@ def patch_page_draft(page_slug):
             section['device_visibility'] = [d for d in devices if d in allowed]
             affected.add(sid)
 
+        elif op == 'layout':
+            sid = patch.get('sid')
+            section = template['sections'].get(sid)
+            if section is None:
+                continue
+            section.setdefault('layout', {})
+            ALLOWED_LAYOUT = {'padding_top', 'padding_bottom', 'background_color',
+                              'background_image', 'text_color', 'max_width'}
+            for k, v in (patch.get('updates') or {}).items():
+                if k in ALLOWED_LAYOUT:
+                    if v in (None, ''):
+                        section['layout'].pop(k, None)
+                    else:
+                        section['layout'][k] = str(v)
+            affected.add(sid)
+
         elif op == 'add_block':
             sid = patch.get('sid')
             section = template['sections'].get(sid)
