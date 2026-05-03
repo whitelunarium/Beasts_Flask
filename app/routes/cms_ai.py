@@ -1,11 +1,13 @@
 # app/routes/cms_ai.py
 # Responsibility: AI-assisted CMS — given a prompt + the current page state +
-# the available section schemas, ask Claude to emit a valid section instance
-# the editor can drop into the page.
+# the available section schemas, ask Groq (Llama 3.3 70B by default) to emit
+# a valid section instance the editor can drop into the page. Uses the same
+# Groq key the chatbot uses (GROQ_API_KEY in .env).
 
 import json
 import os
 
+import requests
 from flask import Blueprint, current_app, jsonify, request
 from flask_login import current_user
 
@@ -16,63 +18,82 @@ from app.utils.auth_decorators import requires_role
 cms_ai_bp = Blueprint('cms_ai', __name__)
 
 
-def _claude_client():
-    """Return an Anthropic client, or None if no key configured."""
-    api_key = os.environ.get('ANTHROPIC_API_KEY')
+def _groq_call(system, user):
+    api_key = current_app.config.get('GROQ_API_KEY') or os.environ.get('GROQ_API_KEY')
     if not api_key:
-        return None
+        return None, 'GROQ_API_KEY not configured'
+    model = current_app.config.get('GROQ_MODEL', 'llama-3.3-70b-versatile')
+    endpoint = (current_app.config.get('GROQ_API_URL', 'https://api.groq.com/openai/v1').rstrip('/')
+                + '/chat/completions')
+    payload = {
+        'model': model,
+        'messages': [
+            {'role': 'system', 'content': system},
+            {'role': 'user',   'content': user},
+        ],
+        'temperature': 0.4,
+        'max_tokens': 2000,
+        'response_format': {'type': 'json_object'},
+    }
     try:
-        from anthropic import Anthropic
-        return Anthropic(api_key=api_key)
-    except Exception:
-        return None
+        res = requests.post(
+            endpoint,
+            headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+            json=payload,
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        return None, f'network error: {exc}'
+    if res.status_code >= 400:
+        try:
+            detail = res.json().get('error', {}).get('message', res.text[:300])
+        except ValueError:
+            detail = res.text[:300]
+        return None, f'HTTP {res.status_code}: {detail}'
+    try:
+        data = res.json()
+        return data['choices'][0]['message']['content'].strip(), None
+    except (ValueError, KeyError, IndexError) as exc:
+        return None, f'bad response shape: {exc}'
 
 
 def _build_prompt(prompt, registry_types, page_context):
-    """Construct the system + user prompt for section generation."""
     system = (
         "You are a layout assistant for a small nonprofit's website CMS. "
         "Given the user's intent and the available section types (with their "
-        "JSON schemas), respond with a SINGLE JSON object describing one "
-        "section to add. The JSON must be valid and contain exactly: "
+        "JSON schemas), respond with a SINGLE valid JSON object describing one "
+        "section to add. The JSON must contain exactly: "
         '{"type": "<one of the available types>", "settings": {...}, '
         '"blocks": [{"type": "...", "settings": {...}}, ...]}. '
-        "Only include `blocks` if the section type has blocks. Use the field "
-        "ids from the schema. Keep copy concise, friendly, and appropriate "
-        "for a community emergency-preparedness organization. Do not include "
-        "Markdown fences. Do not include any prose outside the JSON."
+        "Only include `blocks` if the section type defines block schemas. Use the "
+        "field ids from the schema. Keep copy concise, friendly, and appropriate "
+        "for a community emergency-preparedness organization. Output ONLY the "
+        "JSON object — no Markdown fences, no prose, no explanation."
     )
-    schemas_block = json.dumps(registry_types, indent=2)
-    context_block = json.dumps(page_context or {}, indent=2)
     user = (
-        f"AVAILABLE SECTION TYPES:\n{schemas_block}\n\n"
-        f"CURRENT PAGE STATE (read-only context, do not duplicate):\n{context_block}\n\n"
-        f"USER REQUEST:\n{prompt}\n\n"
-        "Respond with one JSON object only."
+        "AVAILABLE SECTION TYPES:\n" + json.dumps(registry_types, indent=2) +
+        "\n\nCURRENT PAGE STATE (read-only context, do not duplicate):\n" +
+        json.dumps(page_context or {}, indent=2) +
+        "\n\nUSER REQUEST:\n" + prompt +
+        "\n\nRespond with one JSON object only."
     )
     return system, user
 
 
 def _parse_response(text):
-    """Parse Claude's response. Strips fences, finds first {...} object."""
     text = (text or '').strip()
-    # Strip code fences if model added them
     if text.startswith('```'):
-        text = text.split('```', 2)
-        # text now might be ['', 'json\n{...}\n', ''] etc.
-        text = text[1] if len(text) > 1 else ''
-        # Remove leading "json\n" if present
-        if text.startswith('json\n'):
-            text = text[5:]
+        # Strip fences if model added them
+        first = text.find('\n')
+        if first > 0:
+            text = text[first + 1:]
         if text.endswith('```'):
             text = text[:-3]
-    text = text.strip()
-    # Try direct parse first
+        text = text.strip()
     try:
         return json.loads(text)
     except (ValueError, TypeError):
         pass
-    # Fall back: find the first balanced {...}
     start = text.find('{')
     if start < 0:
         return None
@@ -93,9 +114,6 @@ def _parse_response(text):
 @cms_ai_bp.route('/cms/ai/section', methods=['POST'])
 @requires_role('admin')
 def generate_section():
-    """Body: { prompt: str, page_slug?: str, page_context?: object }
-       Returns: { type: str, settings: {...}, blocks?: [...] }
-    """
     body = request.get_json(silent=True) or {}
     prompt = (body.get('prompt') or '').strip()
     if not prompt:
@@ -104,48 +122,32 @@ def generate_section():
     reg = current_app.config.get('CMS_REGISTRY')
     if not reg:
         return error_response('SERVER_ERROR', 500, {'detail': 'cms registry not initialized'})
-    types = reg.list_types()  # public schemas
-
-    client = _claude_client()
-    if not client:
-        return error_response('SERVER_ERROR', 503, {'detail': 'ANTHROPIC_API_KEY not configured'})
+    types = reg.list_types()
 
     system, user = _build_prompt(prompt, types, body.get('page_context'))
-
-    try:
-        msg = client.messages.create(
-            model=os.environ.get('CMS_AI_MODEL', 'claude-3-5-haiku-latest'),
-            max_tokens=2000,
-            system=system,
-            messages=[{'role': 'user', 'content': user}],
-        )
-        # Concatenate all text blocks in the response
-        text = ''.join(
-            (b.text if hasattr(b, 'text') else '') for b in (msg.content or [])
-        )
-    except Exception as exc:                      # noqa: BLE001
-        return error_response('SERVER_ERROR', 502, {'detail': f'AI request failed: {exc}'})
+    text, err = _groq_call(system, user)
+    if err:
+        return error_response('SERVER_ERROR', 502, {'detail': f'AI request failed: {err}'})
 
     section = _parse_response(text)
     if not isinstance(section, dict) or 'type' not in section:
         return error_response('SERVER_ERROR', 502, {
             'detail': 'AI response did not contain a valid section JSON',
-            'raw': text[:1000],
+            'raw': (text or '')[:1000],
         })
 
-    # Validate against registry: type must exist; unknown setting keys dropped.
     type_id = section.get('type')
     type_entry = reg.get(type_id)
     if not type_entry:
         return error_response('SERVER_ERROR', 502, {
             'detail': f'AI selected unknown type {type_id!r}',
-            'raw': text[:1000],
+            'raw': (text or '')[:1000],
         })
+
     schema = type_entry['schema']
     valid_keys = {f['id'] for f in (schema.get('settings') or [])}
     settings = {k: v for k, v in (section.get('settings') or {}).items() if k in valid_keys}
 
-    # Same for blocks
     valid_block_types = {b['type']: {f['id'] for f in (b.get('settings') or [])}
                          for b in (schema.get('blocks') or [])}
     out_blocks = []
