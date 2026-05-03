@@ -22,6 +22,7 @@ from flask_login import current_user
 from app import db
 from app.models.page_template import PageTemplate, STATE_DRAFT, STATE_PUBLISHED, VALID_STATES
 from app.models.preview_token import PreviewToken
+from app.models.page_seo import PageSeo, SEO_FIELDS, DEFAULT_SEO
 from app.services.cms_renderer import render_page, render_section
 from app.utils.errors import error_response
 from app.utils.auth_decorators import requires_role
@@ -522,6 +523,39 @@ def render_one_section():
         'section_type': section_data.get('type'),
         'html':         html,
     }), 200
+
+
+# ─── SEO ─────────────────────────────────────────────────────────────────────
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/seo', methods=['GET'])
+def get_page_seo(page_slug):
+    row = PageSeo.query.filter_by(page_slug=page_slug).first()
+    out = dict(DEFAULT_SEO)
+    out['page_slug']  = page_slug
+    out['updated_at'] = None
+    if row:
+        out.update({k: v for k, v in row.to_dict().items() if v is not None})
+    return jsonify(out), 200
+
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/seo', methods=['PATCH'])
+@requires_role('admin')
+def patch_page_seo(page_slug):
+    body = request.get_json(silent=True) or {}
+    updates = body.get('updates') or {}
+    if not isinstance(updates, dict):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'updates must be an object'})
+    row = PageSeo.query.filter_by(page_slug=page_slug).first()
+    if not row:
+        row = PageSeo(page_slug=page_slug)
+        db.session.add(row)
+    for k, v in updates.items():
+        if k in SEO_FIELDS:
+            setattr(row, k, str(v) if v is not None else None)
+    row.updated_at = datetime.utcnow()
+    row.updated_by = current_user.id
+    db.session.commit()
+    return jsonify(row.to_dict()), 200
 
 
 # ─── Backup / restore ────────────────────────────────────────────────────────
