@@ -7,10 +7,22 @@
 from html import escape as html_escape
 
 from liquid import Environment
+from app.services.cms_stega import encode as stega_encode
+
+
+def _cms_stega_filter(value, field_id, section_id):
+    """Liquid filter: `{{ value | cms_stega: 'field_id', section.id }}`.
+    Returns the value with a hidden stega payload (zero-width chars) so the
+    public-page DOM is self-describing in preview mode.
+    Returns the bare value if any arg is missing (defensive)."""
+    if not section_id or not field_id:
+        return value
+    return stega_encode({'sid': str(section_id), 'field': str(field_id)}, value)
 
 
 # Module-level Liquid environment; safe to share across requests.
 _env = Environment()
+_env.add_filter('cms_stega', _cms_stega_filter)
 
 
 def render_section(section_id, section_data, registry):
