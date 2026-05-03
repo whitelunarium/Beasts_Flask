@@ -361,3 +361,97 @@ def test_anonymous_cannot_patch_draft(client):
 def test_anonymous_cannot_publish(client):
     r = client.post('/api/cms/page/home/publish')
     assert r.status_code in (401, 403)
+
+
+# ── v2.19: rename op + cross-page search ─────────────────────────────────────
+
+def test_admin_can_rename_a_section(client, app):
+    _login_admin(client, app)
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = a['template']['order'][0]
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'rename', 'sid': sid, 'name': 'Above-the-fold hero'}]
+    })
+    assert r.status_code == 200
+    assert r.get_json()['template']['sections'][sid]['name'] == 'Above-the-fold hero'
+
+
+def test_renaming_with_blank_string_clears_the_name(client, app):
+    _login_admin(client, app)
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = a['template']['order'][0]
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'rename', 'sid': sid, 'name': 'Custom name'}]
+    })
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'rename', 'sid': sid, 'name': ''}]
+    })
+    assert r.status_code == 200
+    # blank → key is removed (not present, or None)
+    sec = r.get_json()['template']['sections'][sid]
+    assert sec.get('name') in (None, '')
+
+
+def test_rename_unknown_sid_is_ignored(client, app):
+    _login_admin(client, app)
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'rename', 'sid': 'sec_doesnt_exist', 'name': 'x'}]
+    })
+    # Treat as no-op (no crash, no 500)
+    assert r.status_code == 200
+
+
+def test_search_finds_section_by_text(client, app):
+    _login_admin(client, app)
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    # Update the hero's headline with a unique searchable string
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'set', 'sid': sid, 'key': 'headline',
+                     'value': 'Earthquake preparedness rocks UNIQUEZZ'}]
+    })
+    r = client.get('/api/cms/search?q=uniquezz')
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['count'] >= 1
+    assert any(h['sid'] == sid for h in body['hits'])
+
+
+def test_search_filters_by_type(client, app):
+    _login_admin(client, app)
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    })
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'text_block'}]
+    })
+    r = client.get('/api/cms/search?type=text_block')
+    assert r.status_code == 200
+    hits = r.get_json()['hits']
+    assert all(h['type'] == 'text_block' for h in hits)
+
+
+def test_search_finds_renamed_section_by_name(client, app):
+    _login_admin(client, app)
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = a['template']['order'][0]
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'rename', 'sid': sid, 'name': 'Volunteer banner XYZQ'}]
+    })
+    r = client.get('/api/cms/search?q=xyzq')
+    assert r.status_code == 200
+    hits = r.get_json()['hits']
+    assert any(h['sid'] == sid and h['name'] == 'Volunteer banner XYZQ' for h in hits)
+
+
+def test_search_anonymous_blocked(client):
+    r = client.get('/api/cms/search?q=anything')
+    assert r.status_code in (401, 403)

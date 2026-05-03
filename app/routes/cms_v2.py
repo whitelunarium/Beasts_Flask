@@ -12,6 +12,7 @@
 #   GET    /cms/render                     Render a single section to HTML
 #   POST   /cms/page/<slug>/preview-token  Issue a 7-day share-preview token
 
+import json
 import secrets
 from datetime import datetime
 from copy import deepcopy
@@ -107,6 +108,56 @@ def list_pages():
     for p in pages:
         p['updated_at'] = p['updated_at'].isoformat() if p['updated_at'] else None
     return jsonify({'pages': pages}), 200
+
+
+# ─── Cross-page section search ───────────────────────────────────────────────
+
+@cms_v2_bp.route('/cms/search', methods=['GET'])
+@requires_role('admin')
+def search_sections():
+    """Find every section across every page that matches a query.
+    Query params:
+      q:    text to search inside section settings (case-insensitive)
+      type: filter to one section type
+      state: 'draft' (default) | 'published'
+    """
+    q = (request.args.get('q') or '').strip().lower()
+    type_filter = (request.args.get('type') or '').strip()
+    state = (request.args.get('state') or STATE_DRAFT).strip()
+    if state not in VALID_STATES:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid state'})
+    rows = PageTemplate.query.filter_by(state=state).all()
+    hits = []
+    for row in rows:
+        tpl = row.get_template()
+        for sid, sec in (tpl.get('sections') or {}).items():
+            if type_filter and sec.get('type') != type_filter:
+                continue
+            if q:
+                blob = json.dumps(sec.get('settings') or {}, default=str).lower() + \
+                       json.dumps(sec.get('blocks') or {}, default=str).lower() + \
+                       (sec.get('name') or '').lower() + \
+                       (sec.get('type') or '').lower()
+                if q not in blob:
+                    continue
+            hits.append({
+                'page_slug': row.page_slug,
+                'sid':       sid,
+                'type':      sec.get('type'),
+                'name':      sec.get('name'),
+                'preview':   _preview_blurb(sec),
+            })
+    return jsonify({'hits': hits[:200], 'count': len(hits)}), 200
+
+
+def _preview_blurb(section):
+    """Build a short human-friendly snippet for search results."""
+    s = section.get('settings') or {}
+    for key in ('headline', 'heading', 'title', 'message', 'sub_headline', 'body'):
+        v = s.get(key)
+        if isinstance(v, str) and v.strip():
+            return v.strip()[:120]
+    return (section.get('name') or section.get('type') or '')
 
 
 # ─── Audit log ───────────────────────────────────────────────────────────────
@@ -369,6 +420,18 @@ def patch_page_draft(page_slug):
             if section is None:
                 continue
             section['visible'] = bool(patch.get('visible', True))
+            affected.add(sid)
+
+        elif op == 'rename':
+            sid = patch.get('sid')
+            section = template['sections'].get(sid)
+            if section is None:
+                continue
+            name = (patch.get('name') or '').strip()[:120]
+            if name:
+                section['name'] = name
+            else:
+                section.pop('name', None)
             affected.add(sid)
 
         elif op == 'replace_template':
