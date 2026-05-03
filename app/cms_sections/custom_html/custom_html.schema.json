@@ -1,0 +1,11 @@
+{
+  "type": "custom_html",
+  "label": "Custom HTML",
+  "category": "other",
+  "description": "Drop in raw HTML for one-off content. Use sparingly — prefer typed sections when you can.",
+  "settings": [
+    { "id": "html",  "type": "richtext", "label": "HTML / markup",
+      "default": "<div style=\"padding: 24px; text-align: center;\">Your custom HTML here.</div>" },
+    { "id": "wrapper_class", "type": "text", "label": "Wrapper class (optional)" }
+  ]
+}

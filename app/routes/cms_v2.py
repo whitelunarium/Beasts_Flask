@@ -31,6 +31,10 @@ from app.utils.auth_decorators import requires_role
 cms_v2_bp = Blueprint('cms_v2', __name__)
 
 
+# Soft enforcement matching Shopify's limit. Caller can disable via DEBUG flag.
+MAX_SECTIONS_PER_PAGE = 25
+
+
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
 def _registry():
@@ -283,6 +287,10 @@ def patch_page_draft(page_slug):
             if not type_id or not reg.get(type_id):
                 return error_response('VALIDATION_FAILED', 400,
                                       {'detail': f'unknown section type {type_id!r}'})
+            if len(template['order']) >= MAX_SECTIONS_PER_PAGE:
+                return error_response('VALIDATION_FAILED', 400, {
+                    'detail': f'page is at the {MAX_SECTIONS_PER_PAGE}-section limit; remove one before adding more.',
+                })
             sid = patch.get('sid') or _sid()
             settings = patch.get('settings') or reg.default_settings(type_id)
             section_obj = {
@@ -612,6 +620,27 @@ def import_page(page_slug):
         'sections_html': sections_html,
         'message':       'Imported.',
     }), 200
+
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/create', methods=['POST'])
+@requires_role('admin')
+def create_blank_page(page_slug):
+    """Create an empty draft for a brand-new page slug. Refuses if a draft
+    already exists at that slug — admins can use /duplicate or /import to
+    populate an existing slug."""
+    if not page_slug or '/' in page_slug or len(page_slug) > 80:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid page_slug'})
+    if PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_DRAFT).first():
+        return error_response('VALIDATION_FAILED', 400,
+                              {'detail': 'a draft already exists for this slug'})
+    row = PageTemplate(
+        page_slug=page_slug, state=STATE_DRAFT,
+        template_json='{"sections":{},"order":[]}',
+        updated_by=current_user.id,
+    )
+    db.session.add(row)
+    db.session.commit()
+    return jsonify({'page_slug': page_slug, 'message': 'Page created.'}), 201
 
 
 @cms_v2_bp.route('/cms/page/<string:source_slug>/duplicate', methods=['POST'])
