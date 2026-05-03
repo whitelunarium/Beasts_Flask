@@ -112,6 +112,73 @@ def _parse_response(text):
     return None
 
 
+@cms_ai_bp.route('/cms/ai/placeholder-image', methods=['POST'])
+@requires_role('admin')
+def generate_placeholder_image():
+    """Turn a short description into a usable image URL.
+    Body: {prompt, width?=1200, height?=800}
+    Returns: {url, alt}
+
+    Strategy:
+      1. Ask Groq to polish the user's prompt into a concise, neutral
+         photo-prompt (no proper names, no copyright). Discards any
+         attempt to ask for a logo / specific person.
+      2. Hand the polished prompt off to https://image.pollinations.ai/
+         which returns an actual generated PNG keyed by the prompt
+         (free, no API key, deterministic-ish per prompt). Pollinations
+         lets us pick a width/height and a flag to suppress its watermark.
+      3. Generate an alt-text suggestion in the same Groq call so the
+         frontend can offer one-click "set alt text" too.
+    No image is uploaded — we just return the URL string.
+    """
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get('prompt') or '').strip()
+    if not prompt:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'prompt is required'})
+
+    # Clamp dims to a sane range so a malicious caller can't request 100k px
+    try:
+        width  = max(64, min(int(body.get('width')  or 1200), 2400))
+        height = max(64, min(int(body.get('height') or 800),  2400))
+    except (TypeError, ValueError):
+        width, height = 1200, 800
+
+    # Ask Groq for a polished neutral prompt + alt
+    system = (
+        "You polish image-generation prompts for a small community-emergency-preparedness "
+        "nonprofit website. The prompt becomes the URL slug for an AI image generator, so:\n"
+        "- No people whose identity matters (no celebrities, no specific staff names).\n"
+        "- No copyrighted characters or logos.\n"
+        "- Prefer realistic photography style: well-lit, candid, daylight, community-feel.\n"
+        "- 6–14 words. Be concrete (objects, setting, mood) not abstract.\n"
+        "Reply ONLY a JSON object: "
+        '{"image_prompt": "...", "alt": "..."}.'
+    )
+    user = f"USER ASKED FOR: {prompt}\nPolish to a neutral, ethical photo prompt and write alt text."
+    text, err = _groq_call(system, user, json_mode=True)
+    polished = prompt
+    alt      = prompt
+    if not err and text:
+        try:
+            payload = json.loads(text)
+            if isinstance(payload, dict):
+                polished = (payload.get('image_prompt') or polished).strip()[:300]
+                alt      = (payload.get('alt')          or alt).strip()[:200]
+        except (ValueError, TypeError):
+            pass
+
+    # Pollinations URL — public, free, no key. `nologo=true` removes their stamp.
+    # `seed` keyed off polished prompt makes the same prompt return the same image.
+    from urllib.parse import quote
+    seed = abs(hash(polished)) % 1_000_000
+    url = (
+        'https://image.pollinations.ai/prompt/'
+        + quote(polished, safe='')
+        + f'?width={width}&height={height}&nologo=true&seed={seed}'
+    )
+    return jsonify({'url': url, 'alt': alt, 'polished_prompt': polished}), 200
+
+
 @cms_ai_bp.route('/cms/ai/alt-text', methods=['POST'])
 @requires_role('admin')
 def generate_alt_text():
