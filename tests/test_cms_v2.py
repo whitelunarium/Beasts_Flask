@@ -15,17 +15,64 @@ from app.models.user import User
 
 # ── Sections registry ────────────────────────────────────────────────────────
 
-def test_registry_lists_three_starter_sections(client):
+def test_registry_lists_starter_sections(client):
     res = client.get('/api/cms/sections-registry')
     assert res.status_code == 200
     body = res.get_json()
     types = {s['type'] for s in body['sections']}
-    assert {'hero', 'text_block', 'image_with_text'}.issubset(types)
+    assert {'hero', 'text_block', 'image_with_text', 'faq'}.issubset(types)
     # Each schema has the minimum fields
     for s in body['sections']:
         assert 'type' in s
         assert 'label' in s
         assert isinstance(s.get('settings'), list)
+
+
+def test_faq_section_supports_blocks_end_to_end(client, app):
+    _login_admin(client, app)
+    # Add FAQ section
+    res = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'faq'}]
+    }).get_json()
+    sid = res['template']['order'][0]
+    # Add three Q&A blocks
+    res = client.patch('/api/cms/page/home/draft', json={
+        'patches': [
+            {'op': 'add_block', 'sid': sid, 'block_type': 'qa',
+             'settings': {'question': 'Q1?', 'answer': 'A1'}},
+            {'op': 'add_block', 'sid': sid, 'block_type': 'qa',
+             'settings': {'question': 'Q2?', 'answer': 'A2'}},
+            {'op': 'add_block', 'sid': sid, 'block_type': 'qa',
+             'settings': {'question': 'Q3?', 'answer': 'A3'}},
+        ]
+    }).get_json()
+    section = res['template']['sections'][sid]
+    assert len(section['block_order']) == 3
+    # Rendered HTML should contain all three questions
+    html = res['sections_html'][sid]
+    assert 'Q1?' in html and 'Q2?' in html and 'Q3?' in html
+
+
+def test_faq_block_reorder(client, app):
+    _login_admin(client, app)
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'faq'}]
+    }).get_json()
+    sid = a['template']['order'][0]
+    add_blocks = client.patch('/api/cms/page/home/draft', json={
+        'patches': [
+            {'op': 'add_block', 'sid': sid, 'block_type': 'qa', 'settings': {'question': 'A'}},
+            {'op': 'add_block', 'sid': sid, 'block_type': 'qa', 'settings': {'question': 'B'}},
+        ]
+    }).get_json()
+    block_order = add_blocks['template']['sections'][sid]['block_order']
+    assert len(block_order) == 2
+    # Reverse the order
+    reversed_order = list(reversed(block_order))
+    res = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'reorder_blocks', 'sid': sid, 'block_order': reversed_order}]
+    }).get_json()
+    assert res['template']['sections'][sid]['block_order'] == reversed_order
 
 
 def test_registry_drift_guard_each_section_has_settings_list(client):
