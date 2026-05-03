@@ -55,7 +55,7 @@ def create_app():
             'http://127.0.0.1:4000',
             'http://localhost:4600',
             'http://127.0.0.1:4600',
-            'http://localhost:4500',    
+            'http://localhost:4500',
             'http://127.0.0.1:4500',
             'http://localhost:8080',
             'http://127.0.0.1:8080',
@@ -63,6 +63,9 @@ def create_app():
             'https://pnec.opencodingsociety.com',
             'https://open-coding-society.github.io',
             'https://whitelunarium.github.io',
+            'https://powaynec.com',
+            'https://www.powaynec.com',
+            'https://beasts.opencodingsociety.com',
         ],
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     )
@@ -427,6 +430,11 @@ def _register_blueprints(app):
     from app.routes.announcement import announcements_bp
     from app.routes.site_config import site_config_bp
     from app.routes.blog import blog_bp
+    from app.routes.page_sections import page_sections_bp
+    from app.routes.page_overrides import page_overrides_bp
+    from app.routes.cms_manifest import cms_manifest_bp
+    from app.routes.chat import chat_bp
+    from app.routes.push import push_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -444,6 +452,11 @@ def _register_blueprints(app):
     app.register_blueprint(announcements_bp, url_prefix='/api')
     app.register_blueprint(site_config_bp,   url_prefix='/api')
     app.register_blueprint(blog_bp,          url_prefix='/api')
+    app.register_blueprint(page_sections_bp,  url_prefix='/api')
+    app.register_blueprint(page_overrides_bp, url_prefix='/api')
+    app.register_blueprint(cms_manifest_bp,   url_prefix='/api')
+    app.register_blueprint(chat_bp,           url_prefix='/api')
+    app.register_blueprint(push_bp,           url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
