@@ -18,7 +18,7 @@ from app.utils.auth_decorators import requires_role
 cms_ai_bp = Blueprint('cms_ai', __name__)
 
 
-def _groq_call(system, user):
+def _groq_call(system, user, json_mode=True):
     api_key = current_app.config.get('GROQ_API_KEY') or os.environ.get('GROQ_API_KEY')
     if not api_key:
         return None, 'GROQ_API_KEY not configured'
@@ -33,8 +33,9 @@ def _groq_call(system, user):
         ],
         'temperature': 0.4,
         'max_tokens': 2000,
-        'response_format': {'type': 'json_object'},
     }
+    if json_mode:
+        payload['response_format'] = {'type': 'json_object'}
     try:
         res = requests.post(
             endpoint,
@@ -109,6 +110,29 @@ def _parse_response(text):
                 except (ValueError, TypeError):
                     return None
     return None
+
+
+@cms_ai_bp.route('/cms/ai/alt-text', methods=['POST'])
+@requires_role('admin')
+def generate_alt_text():
+    """Generate image alt text from a URL. Body: {image_url, context?}"""
+    body = request.get_json(silent=True) or {}
+    image_url = (body.get('image_url') or '').strip()
+    if not image_url:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'image_url required'})
+    ctx = (body.get('context') or '').strip()
+    system = ('You write concise, descriptive alt text for images on a community '
+              'emergency-preparedness nonprofit website (PNEC, Poway). Output ONLY '
+              'the alt text, no quotes, under 120 characters. Describe what is '
+              'visible, not metaphorical meaning.')
+    user = (f'IMAGE URL: {image_url}\n' +
+            (f'CONTEXT: {ctx}\n' if ctx else '') +
+            'Write alt text.')
+    text, err = _groq_call(system, user, json_mode=False)
+    if err:
+        return error_response('SERVER_ERROR', 502, {'detail': err})
+    alt = (text or '').strip().strip('"\'').strip()[:200]
+    return jsonify({'alt': alt}), 200
 
 
 @cms_ai_bp.route('/cms/ai/section', methods=['POST'])
