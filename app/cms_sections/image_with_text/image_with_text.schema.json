@@ -1,0 +1,16 @@
+{
+  "type": "image_with_text",
+  "label": "Image with text",
+  "category": "content",
+  "description": "Image on one side, heading + text + CTA on the other. Image position is configurable.",
+  "settings": [
+    { "id": "image_url",      "type": "image",    "label": "Image" },
+    { "id": "image_alt",      "type": "text",     "label": "Image alt text", "default": "" },
+    { "id": "heading",        "type": "text",     "label": "Heading",       "default": "About PNEC" },
+    { "id": "body",           "type": "richtext", "label": "Body",          "default": "PNEC is a community-based emergency preparedness organization serving the neighborhoods of Poway, CA." },
+    { "id": "cta_label",      "type": "text",     "label": "Button label",  "default": "Learn more" },
+    { "id": "cta_url",        "type": "url",      "label": "Button link",   "default": "#" },
+    { "id": "image_position", "type": "select",   "label": "Image position",
+      "options": ["left", "right"], "default": "left" }
+  ]
+}

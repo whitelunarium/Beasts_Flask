@@ -66,10 +66,25 @@ class Config:
     POWAY_LON = -117.0359
     RISK_CACHE_SECONDS = 1800  # 30 minutes
     GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or None
-    GEMINI_MODEL = os.environ.get('GEMINI_MODEL') or 'gemini-2.5-flash'
+    GEMINI_MODEL = os.environ.get('GEMINI_MODEL') or 'gemini-2.5-flash-lite'
     GEMINI_API_URL = os.environ.get('GEMINI_API_URL') or 'https://generativelanguage.googleapis.com/v1beta'
     GEMINI_RATE_LIMIT_PER_MINUTE = int(os.environ.get('GEMINI_RATE_LIMIT_PER_MINUTE') or 20)
+    GROQ_API_KEY = os.environ.get('GROQ_API_KEY') or None
+    GROQ_MODEL = os.environ.get('GROQ_MODEL') or 'llama-3.3-70b-versatile'
+    GROQ_API_URL = 'https://api.groq.com/openai/v1'
     REDIS_URL = os.environ.get('REDIS_URL') or None
+
+    # ─── Web Push (VAPID) ─────────────────────────────────────────────────────
+    VAPID_PUBLIC_KEY  = os.environ.get('VAPID_PUBLIC_KEY', '')
+    VAPID_PRIVATE_KEY = os.environ.get('VAPID_PRIVATE_KEY', '')
+    VAPID_EMAIL       = os.environ.get('VAPID_EMAIL', 'info@powaynec.com')
+
+    # ─── CMS v2 ───────────────────────────────────────────────────────────────
+    # Where on disk the section type definitions live (each subdir is a type
+    # containing <type>.html and <type>.schema.json).
+    CMS_SECTIONS_PATH = os.environ.get('CMS_SECTIONS_PATH') or os.path.join(
+        os.path.dirname(__file__), 'cms_sections'
+    )
 
 
 class DevelopmentConfig(Config):

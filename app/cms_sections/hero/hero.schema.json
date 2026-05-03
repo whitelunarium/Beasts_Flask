@@ -1,0 +1,15 @@
+{
+  "type": "hero",
+  "label": "Hero",
+  "category": "headers",
+  "description": "A large headline + sub-headline + image with an optional call-to-action.",
+  "settings": [
+    { "id": "headline",       "type": "text",   "label": "Headline",       "default": "Neighbors Helping Neighbors" },
+    { "id": "sub_headline",   "type": "text",   "label": "Sub-headline",   "default": "Poway Neighborhood Emergency Corps" },
+    { "id": "image_url",      "type": "image",  "label": "Background image" },
+    { "id": "cta_label",      "type": "text",   "label": "Button label",   "default": "Learn more" },
+    { "id": "cta_url",        "type": "url",    "label": "Button link",    "default": "#" },
+    { "id": "text_alignment", "type": "select", "label": "Text alignment",
+      "options": ["left", "center", "right"], "default": "center" }
+  ]
+}

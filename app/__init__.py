@@ -397,6 +397,12 @@ def create_app():
     # ── Register blueprints ───────────────────────────────────────────────────
     _register_blueprints(app)
 
+    # ── Initialize CMS v2 section-type registry ──────────────────────────────
+    from app.services.cms_registry import CmsRegistry
+    registry = CmsRegistry(app.config.get('CMS_SECTIONS_PATH', ''))
+    registry.load()
+    app.config['CMS_REGISTRY'] = registry
+
     # ── Create tables + seed on first run ─────────────────────────────────────
     with app.app_context():
         db.create_all()
@@ -433,6 +439,7 @@ def _register_blueprints(app):
     from app.routes.page_sections import page_sections_bp
     from app.routes.page_overrides import page_overrides_bp
     from app.routes.cms_manifest import cms_manifest_bp
+    from app.routes.cms_v2 import cms_v2_bp
     from app.routes.chat import chat_bp
     from app.routes.push import push_bp
 
@@ -455,6 +462,7 @@ def _register_blueprints(app):
     app.register_blueprint(page_sections_bp,  url_prefix='/api')
     app.register_blueprint(page_overrides_bp, url_prefix='/api')
     app.register_blueprint(cms_manifest_bp,   url_prefix='/api')
+    app.register_blueprint(cms_v2_bp,         url_prefix='/api')
     app.register_blueprint(chat_bp,           url_prefix='/api')
     app.register_blueprint(push_bp,           url_prefix='/api')
 
