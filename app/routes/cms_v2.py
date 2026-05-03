@@ -73,6 +73,104 @@ def _check_token(page_slug, token):
     return bool(row and row.is_valid_for(page_slug))
 
 
+# ─── Pages list ──────────────────────────────────────────────────────────────
+
+@cms_v2_bp.route('/cms/pages', methods=['GET'])
+def list_pages():
+    """Return the list of pages that have any v2 template (draft or published).
+    Public — used by the editor to populate its page selector."""
+    rows = (PageTemplate.query
+            .with_entities(PageTemplate.page_slug, PageTemplate.state, PageTemplate.updated_at)
+            .all())
+    by_slug = {}
+    for slug, state, updated_at in rows:
+        entry = by_slug.setdefault(slug, {'page_slug': slug, 'has_draft': False,
+                                          'has_published': False, 'updated_at': None})
+        if state == STATE_DRAFT:     entry['has_draft']     = True
+        if state == STATE_PUBLISHED: entry['has_published'] = True
+        if updated_at and (not entry['updated_at'] or updated_at > entry['updated_at']):
+            entry['updated_at'] = updated_at
+    pages = sorted(by_slug.values(), key=lambda p: p['page_slug'])
+    # Always include the canonical built-in pages even if empty
+    seen = {p['page_slug'] for p in pages}
+    for canon in ('home', 'about', 'programs'):
+        if canon not in seen:
+            pages.append({'page_slug': canon, 'has_draft': False,
+                          'has_published': False, 'updated_at': None})
+    # ISO-format timestamps
+    for p in pages:
+        p['updated_at'] = p['updated_at'].isoformat() if p['updated_at'] else None
+    return jsonify({'pages': pages}), 200
+
+
+# ─── Audit log ───────────────────────────────────────────────────────────────
+
+@cms_v2_bp.route('/cms/audit', methods=['GET'])
+@requires_role('admin')
+def get_audit_log():
+    """Return recent template + theme + override changes, newest first.
+    Optional: ?page=<slug> filters to a single page."""
+    from app.models.theme_settings import ThemeSettings
+    from app.models.page_override import PageOverride
+    from app.models.user import User
+    page_slug = request.args.get('page')
+    limit = min(int(request.args.get('limit') or 50), 200)
+
+    events = []
+    # Page templates
+    q = PageTemplate.query
+    if page_slug:
+        q = q.filter_by(page_slug=page_slug)
+    for row in q.order_by(PageTemplate.updated_at.desc()).limit(limit).all():
+        events.append({
+            'kind':       'page_template',
+            'page_slug':  row.page_slug,
+            'state':      row.state,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+            'updated_by': row.updated_by,
+            'detail':     f'Edited {row.state} of {row.page_slug}',
+        })
+        if row.published_at:
+            events.append({
+                'kind':       'page_publish',
+                'page_slug':  row.page_slug,
+                'updated_at': row.published_at.isoformat(),
+                'updated_by': row.published_by,
+                'detail':     f'Published {row.page_slug}',
+            })
+    # Theme
+    for row in ThemeSettings.query.order_by(ThemeSettings.updated_at.desc()).limit(limit).all():
+        events.append({
+            'kind':       'theme',
+            'state':      row.state,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+            'updated_by': row.updated_by,
+            'detail':     f'Theme {row.state} updated',
+        })
+    # Overrides
+    oq = PageOverride.query
+    if page_slug:
+        oq = oq.filter_by(page_slug=page_slug)
+    for row in oq.order_by(PageOverride.updated_at.desc()).limit(limit).all():
+        events.append({
+            'kind':       'override',
+            'page_slug':  row.page_slug,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+            'updated_by': row.updated_by,
+            'detail':     f'Override {row.element_id} on {row.page_slug}',
+        })
+
+    # Resolve user display names
+    user_ids = [e['updated_by'] for e in events if e.get('updated_by')]
+    users = {u.id: u.display_name or u.email
+             for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    for e in events:
+        e['updated_by_name'] = users.get(e.get('updated_by')) or 'unknown'
+
+    events.sort(key=lambda e: e.get('updated_at') or '', reverse=True)
+    return jsonify({'events': events[:limit]}), 200
+
+
 # ─── Sections registry endpoint ──────────────────────────────────────────────
 
 @cms_v2_bp.route('/cms/sections-registry', methods=['GET'])
@@ -186,13 +284,22 @@ def patch_page_draft(page_slug):
                                       {'detail': f'unknown section type {type_id!r}'})
             sid = patch.get('sid') or _sid()
             settings = patch.get('settings') or reg.default_settings(type_id)
-            template['sections'][sid] = {
+            section_obj = {
                 'type':        type_id,
                 'settings':    settings,
                 'visible':     True,
                 'blocks':      {},
                 'block_order': [],
             }
+            # Inline blocks support — presets + AI use this for single round-trip
+            for b in (patch.get('blocks') or []):
+                bid = _sid()
+                section_obj['blocks'][bid] = {
+                    'type':     b.get('type') or 'item',
+                    'settings': b.get('settings') or {},
+                }
+                section_obj['block_order'].append(bid)
+            template['sections'][sid] = section_obj
             index = patch.get('index')
             if isinstance(index, int) and 0 <= index <= len(template['order']):
                 template['order'].insert(index, sid)
