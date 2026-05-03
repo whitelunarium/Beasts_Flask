@@ -524,6 +524,70 @@ def render_one_section():
     }), 200
 
 
+# ─── Backup / restore ────────────────────────────────────────────────────────
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/export', methods=['GET'])
+@requires_role('admin')
+def export_page(page_slug):
+    """Download the page's draft+published templates as one JSON blob."""
+    out = {'page_slug': page_slug, 'exported_at': datetime.utcnow().isoformat() + 'Z'}
+    for state in (STATE_DRAFT, STATE_PUBLISHED):
+        row = PageTemplate.query.filter_by(page_slug=page_slug, state=state).first()
+        out[state] = row.get_template() if row else None
+    return jsonify(out), 200
+
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/import', methods=['POST'])
+@requires_role('admin')
+def import_page(page_slug):
+    """Replace this page's draft template with the one in the body.
+    Body: { template: {sections, order} } OR a previously-exported blob
+    (in which case the `draft` key is used)."""
+    body = request.get_json(silent=True) or {}
+    template = body.get('template') or body.get('draft')
+    if not isinstance(template, dict):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'template must be an object'})
+    template.setdefault('sections', {})
+    template.setdefault('order', [])
+    row = _get_or_create_template(page_slug, STATE_DRAFT)
+    row.set_template(template)
+    row.updated_at = datetime.utcnow()
+    row.updated_by = current_user.id
+    db.session.commit()
+    reg = _registry()
+    sections_html = render_page(template, reg) if reg else {}
+    return jsonify({
+        'page_slug':     page_slug,
+        'template':      template,
+        'sections_html': sections_html,
+        'message':       'Imported.',
+    }), 200
+
+
+@cms_v2_bp.route('/cms/page/<string:source_slug>/duplicate', methods=['POST'])
+@requires_role('admin')
+def duplicate_page(source_slug):
+    """Copy source page's draft template to a new page slug.
+    Body: { target_slug: '...' }"""
+    body = request.get_json(silent=True) or {}
+    target = (body.get('target_slug') or '').strip()
+    if not target or '/' in target or len(target) > 80:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid target_slug'})
+    src = PageTemplate.query.filter_by(page_slug=source_slug, state=STATE_DRAFT).first()
+    if not src:
+        return error_response('NOT_FOUND', 404, {'detail': 'no draft on source page'})
+    if PageTemplate.query.filter_by(page_slug=target, state=STATE_DRAFT).first():
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'target page already has a draft'})
+    new_row = PageTemplate(
+        page_slug=target, state=STATE_DRAFT,
+        template_json=src.template_json,
+        updated_by=current_user.id,
+    )
+    db.session.add(new_row)
+    db.session.commit()
+    return jsonify({'page_slug': target, 'message': 'Duplicated.'}), 201
+
+
 # ─── Preview tokens ──────────────────────────────────────────────────────────
 
 @cms_v2_bp.route('/cms/page/<string:page_slug>/preview-token', methods=['POST'])
