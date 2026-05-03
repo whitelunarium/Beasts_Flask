@@ -135,6 +135,83 @@ def generate_alt_text():
     return jsonify({'alt': alt}), 200
 
 
+@cms_ai_bp.route('/cms/ai/page', methods=['POST'])
+@requires_role('admin')
+def generate_page():
+    """Generate a multi-section page layout from a single prompt.
+    Body: {prompt, page_slug?}
+    Returns: {sections: [{type, settings, blocks?}, ...]} — caller adds them in order."""
+    body = request.get_json(silent=True) or {}
+    prompt = (body.get('prompt') or '').strip()
+    if not prompt:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'prompt is required'})
+    reg = current_app.config.get('CMS_REGISTRY')
+    if not reg:
+        return error_response('SERVER_ERROR', 500, {'detail': 'cms registry not initialized'})
+    types = reg.list_types()
+
+    system = (
+        "You build full landing-page layouts for a small nonprofit's website CMS "
+        "(Poway Neighborhood Emergency Corps — community emergency preparedness). "
+        "Given the user's prompt and the available section types, output a SINGLE "
+        "valid JSON object: "
+        '{"sections": [{"type": "<one of the available types>", "settings": {...}, '
+        '"blocks": [{"type": "...", "settings": {...}}, ...]}, ...]}. '
+        "Use 4-6 sections per page typically: a hero or cta_banner at top, then "
+        "1-3 content sections (text_block, image_with_text, card_list, faq, gallery), "
+        "and end with a contact_cta or another cta_banner. Use field ids from the "
+        "schemas. Keep copy concise, friendly, factual — no emoji unless natural. "
+        "Output ONLY the JSON, no Markdown fences, no prose."
+    )
+    user = (
+        "AVAILABLE SECTION TYPES:\n" + json.dumps(types, indent=2) +
+        "\n\nUSER PROMPT:\n" + prompt +
+        "\n\nRespond with one JSON object containing a 'sections' array."
+    )
+    text, err = _groq_call(system, user)
+    if err:
+        return error_response('SERVER_ERROR', 502, {'detail': err})
+    parsed = _parse_response(text)
+    if not isinstance(parsed, dict) or not isinstance(parsed.get('sections'), list):
+        return error_response('SERVER_ERROR', 502, {
+            'detail': 'AI response did not contain a sections array',
+            'raw': (text or '')[:1000],
+        })
+
+    out_sections = []
+    for s in parsed['sections']:
+        type_id = s.get('type')
+        type_entry = reg.get(type_id)
+        if not type_entry:
+            continue
+        schema = type_entry['schema']
+        valid_keys = {f['id'] for f in (schema.get('settings') or [])}
+        settings = {k: v for k, v in (s.get('settings') or {}).items() if k in valid_keys}
+        valid_block_types = {b['type']: {f['id'] for f in (b.get('settings') or [])}
+                             for b in (schema.get('blocks') or [])}
+        blocks = []
+        for b in (s.get('blocks') or []):
+            bt = b.get('type')
+            if bt not in valid_block_types:
+                continue
+            blocks.append({
+                'type': bt,
+                'settings': {k: v for k, v in (b.get('settings') or {}).items()
+                             if k in valid_block_types[bt]},
+            })
+        section_obj = {'type': type_id, 'settings': settings}
+        if blocks:
+            section_obj['blocks'] = blocks
+        out_sections.append(section_obj)
+
+    if not out_sections:
+        return error_response('SERVER_ERROR', 502, {
+            'detail': 'AI returned no valid sections',
+            'raw': (text or '')[:1000],
+        })
+    return jsonify({'sections': out_sections}), 200
+
+
 @cms_ai_bp.route('/cms/ai/section', methods=['POST'])
 @requires_role('admin')
 def generate_section():
