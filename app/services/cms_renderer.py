@@ -89,6 +89,7 @@ def _wrap(section_id, type_id, visible, body, device_visibility=None, layout=Non
         if 'mobile'  not in device_visibility: classes.append('cms-hide-mobile')
 
     style_parts = []
+    animation = ''
     if isinstance(layout, dict):
         if layout.get('padding_top'):       style_parts.append(f'padding-top:{html_escape(str(layout["padding_top"]))}')
         if layout.get('padding_bottom'):    style_parts.append(f'padding-bottom:{html_escape(str(layout["padding_bottom"]))}')
@@ -98,7 +99,14 @@ def _wrap(section_id, type_id, visible, body, device_visibility=None, layout=Non
             style_parts.append(f'background-image:url("{url}");background-size:cover;background-position:center')
         if layout.get('text_color'):        style_parts.append(f'color:{html_escape(str(layout["text_color"]))}')
         if layout.get('max_width'):         style_parts.append(f'max-width:{html_escape(str(layout["max_width"]))};margin-left:auto;margin-right:auto')
+        # Entrance animation — emitted as a class. Frontend (hydrate.js) attaches
+        # an IntersectionObserver and adds .cms-anim-in once the element is visible.
+        anim = (layout.get('animation') or '').strip()
+        if anim in {'fade-in', 'fade-up', 'fade-down', 'slide-left', 'slide-right', 'zoom-in'}:
+            classes.append(f'cms-anim cms-anim-{anim}')
+            animation = anim
     style_attr = f' style="{"; ".join(style_parts)}"' if style_parts else ''
+    anim_attr  = f' data-cms-animation="{html_escape(animation)}"' if animation else ''
 
     return (
         f'<div id="cms-section-{html_escape(str(section_id))}"'
@@ -106,6 +114,7 @@ def _wrap(section_id, type_id, visible, body, device_visibility=None, layout=Non
         f' data-cms-section-id="{html_escape(str(section_id))}"'
         f' data-cms-section-type="{html_escape(str(type_id))}"'
         f' data-cms-section-visible="{ "true" if visible else "false" }"'
+        f'{anim_attr}'
         f'{style_attr}>'
         f'{body}</div>'
     )
