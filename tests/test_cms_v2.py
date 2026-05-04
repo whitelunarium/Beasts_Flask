@@ -530,6 +530,40 @@ def test_diff_anonymous_blocked(client):
     assert r.status_code in (401, 403)
 
 
+def test_import_caps_at_25_sections(client, app):
+    """Import endpoint must enforce the same 25-section cap as the add op."""
+    _login_admin(client, app)
+    # Build a 30-section import — extras should be silently dropped, not stored
+    template = {'sections': {}, 'order': []}
+    for i in range(30):
+        sid = f's{i:03d}'
+        template['sections'][sid] = {'type': 'text_block', 'settings': {'heading': f'H{i}'}}
+        template['order'].append(sid)
+    r = client.post('/api/cms/page/imp-test/import', json={'template': template})
+    assert r.status_code == 200
+    body = r.get_json()
+    assert len(body['template']['order']) == 25
+    assert body['dropped_count'] == 5
+
+
+def test_import_drops_unknown_section_types(client, app):
+    _login_admin(client, app)
+    template = {
+        'sections': {
+            's1': {'type': 'hero',         'settings': {}},
+            's2': {'type': 'made_up_type', 'settings': {}},  # should be dropped
+            's3': {'type': 'text_block',   'settings': {}},
+        },
+        'order': ['s1', 's2', 's3'],
+    }
+    r = client.post('/api/cms/page/imp-types/import', json={'template': template})
+    assert r.status_code == 200
+    body = r.get_json()
+    types = [body['template']['sections'][sid]['type'] for sid in body['template']['order']]
+    assert types == ['hero', 'text_block']
+    assert body['dropped_count'] == 1
+
+
 def test_add_block_enforces_50_block_limit(client, app):
     """Per-section block cap (v2.40) — bulk paste shouldn't blow up a section
     with thousands of blocks."""

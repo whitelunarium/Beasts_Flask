@@ -868,25 +868,75 @@ def export_page(page_slug):
 def import_page(page_slug):
     """Replace this page's draft template with the one in the body.
     Body: { template: {sections, order} } OR a previously-exported blob
-    (in which case the `draft` key is used)."""
+    (in which case the `draft` key is used).
+
+    BUG FIX (v2.40): the previous implementation accepted any dict — admins
+    could (accidentally or otherwise) import a 1000-section template and
+    bypass the 25-section soft cap, plant unknown section types, etc. Now
+    validates structure + drops unknown types + enforces the same caps as
+    the patch ops.
+    """
     body = request.get_json(silent=True) or {}
     template = body.get('template') or body.get('draft')
     if not isinstance(template, dict):
         return error_response('VALIDATION_FAILED', 400, {'detail': 'template must be an object'})
-    template.setdefault('sections', {})
-    template.setdefault('order', [])
+
+    reg = _registry()
+    sections_in = template.get('sections') or {}
+    order_in    = template.get('order')    or []
+    if not isinstance(sections_in, dict):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'sections must be an object'})
+    if not isinstance(order_in, list):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'order must be a list'})
+
+    # Build a clean template: drop unknown section types, cap order length,
+    # cap blocks per section, drop block_order entries that don't exist in blocks.
+    clean_sections = {}
+    clean_order = []
+    for sid in order_in[:MAX_SECTIONS_PER_PAGE]:
+        if not isinstance(sid, str) or sid not in sections_in:
+            continue
+        sec = sections_in[sid]
+        if not isinstance(sec, dict):
+            continue
+        type_id = sec.get('type')
+        if not (reg and reg.get(type_id)):
+            # Skip sections with unknown types — never silently store them
+            continue
+        blocks_in = sec.get('blocks') if isinstance(sec.get('blocks'), dict) else {}
+        block_order_in = sec.get('block_order') if isinstance(sec.get('block_order'), list) else []
+        # Cap block count + drop dangling order entries
+        valid_block_ids = [bid for bid in block_order_in if isinstance(bid, str) and bid in blocks_in]
+        valid_block_ids = valid_block_ids[:MAX_BLOCKS_PER_SECTION]
+        clean_blocks = {bid: blocks_in[bid] for bid in valid_block_ids}
+        clean_sec = {
+            'type':        type_id,
+            'settings':    sec.get('settings') or {},
+            'visible':     bool(sec.get('visible', True)),
+            'blocks':      clean_blocks,
+            'block_order': valid_block_ids,
+        }
+        # Carry over optional fields if present
+        for k in ('layout', 'device_visibility', 'name'):
+            if k in sec:
+                clean_sec[k] = sec[k]
+        clean_sections[sid] = clean_sec
+        clean_order.append(sid)
+
+    template = {'sections': clean_sections, 'order': clean_order}
     row = _get_or_create_template(page_slug, STATE_DRAFT)
     row.set_template(template)
     row.updated_at = datetime.utcnow()
     row.updated_by = current_user.id
     db.session.commit()
-    reg = _registry()
     sections_html = render_page(template, reg) if reg else {}
     return jsonify({
         'page_slug':     page_slug,
         'template':      template,
         'sections_html': sections_html,
         'message':       'Imported.',
+        # Tell the FE if anything got dropped during validation
+        'dropped_count': len(order_in) - len(clean_order),
     }), 200
 
 
