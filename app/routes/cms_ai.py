@@ -17,6 +17,21 @@ from app.utils.auth_decorators import requires_role
 
 cms_ai_bp = Blueprint('cms_ai', __name__)
 
+# Cap prompt length to avoid runaway Groq spend on a malformed/runaway request.
+# 4k chars is plenty for "describe a 5-section page with…" prompts.
+_MAX_PROMPT_LEN = 4000
+
+
+def _validate_prompt(body, key='prompt'):
+    """Return (prompt, error_response) — exactly one is non-None."""
+    prompt = (body.get(key) or '').strip()
+    if not prompt:
+        return None, error_response('VALIDATION_FAILED', 400, {'detail': f'{key} is required'})
+    if len(prompt) > _MAX_PROMPT_LEN:
+        return None, error_response('VALIDATION_FAILED', 400,
+            {'detail': f'{key} too long (max {_MAX_PROMPT_LEN} chars)'})
+    return prompt, None
+
 
 def _groq_call(system, user, json_mode=True):
     api_key = current_app.config.get('GROQ_API_KEY') or os.environ.get('GROQ_API_KEY')
@@ -132,9 +147,9 @@ def generate_placeholder_image():
     No image is uploaded — we just return the URL string.
     """
     body = request.get_json(silent=True) or {}
-    prompt = (body.get('prompt') or '').strip()
-    if not prompt:
-        return error_response('VALIDATION_FAILED', 400, {'detail': 'prompt is required'})
+    prompt, err = _validate_prompt(body)
+    if err:
+        return err
 
     # Clamp dims to a sane range so a malicious caller can't request 100k px
     try:
@@ -209,9 +224,9 @@ def generate_page():
     Body: {prompt, page_slug?}
     Returns: {sections: [{type, settings, blocks?}, ...]} — caller adds them in order."""
     body = request.get_json(silent=True) or {}
-    prompt = (body.get('prompt') or '').strip()
-    if not prompt:
-        return error_response('VALIDATION_FAILED', 400, {'detail': 'prompt is required'})
+    prompt, err = _validate_prompt(body)
+    if err:
+        return err
     reg = current_app.config.get('CMS_REGISTRY')
     if not reg:
         return error_response('SERVER_ERROR', 500, {'detail': 'cms registry not initialized'})
@@ -283,9 +298,9 @@ def generate_page():
 @requires_role('admin')
 def generate_section():
     body = request.get_json(silent=True) or {}
-    prompt = (body.get('prompt') or '').strip()
-    if not prompt:
-        return error_response('VALIDATION_FAILED', 400, {'detail': 'prompt is required'})
+    prompt, err = _validate_prompt(body)
+    if err:
+        return err
 
     reg = current_app.config.get('CMS_REGISTRY')
     if not reg:
