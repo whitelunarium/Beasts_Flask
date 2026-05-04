@@ -97,6 +97,23 @@ def update_config_entry(key):
     return jsonify({'message': 'Config updated.', 'entry': entry.to_dict()}), 200
 
 
+@site_config_bp.route('/site-config/<string:key>', methods=['DELETE'])
+@requires_role('admin')
+def reset_config_entry(key):
+    """Delete a single config entry — caller falls back to the original
+    HTML default. Admin only.
+
+    Note: SiteConfig rows are seeded with current values; deleting the row
+    means future reads return no value for that key, so applyAll() leaves
+    the original HTML alone. That's the desired "reset to default" behavior.
+    """
+    entry = SiteConfig.query.filter_by(key=key).first()
+    if entry:
+        db.session.delete(entry)
+        db.session.commit()
+    return jsonify({'message': 'Config entry removed.'}), 200
+
+
 @site_config_bp.route('/site-config/bulk', methods=['PATCH'])
 @requires_role('admin')
 def bulk_update_config():
