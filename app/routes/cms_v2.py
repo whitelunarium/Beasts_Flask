@@ -36,6 +36,18 @@ cms_v2_bp = Blueprint('cms_v2', __name__)
 MAX_SECTIONS_PER_PAGE = 25
 MAX_BLOCKS_PER_SECTION = 50
 
+# Allowed characters in a page slug. Mirrors the URL-safe slug shape every
+# other CMS uses: lowercase letters, digits, hyphens. Length 1-80. Underscore
+# permitted as the leading char only (for canonical groups like _header).
+import re as _re
+_SLUG_RE = _re.compile(r'^_?[a-z0-9]+(?:-[a-z0-9]+)*$')
+
+def _valid_slug(s):
+    if not isinstance(s, str): return False
+    s = s.strip()
+    if not s or len(s) > 80: return False
+    return bool(_SLUG_RE.match(s))
+
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -946,8 +958,9 @@ def create_blank_page(page_slug):
     """Create an empty draft for a brand-new page slug. Refuses if a draft
     already exists at that slug — admins can use /duplicate or /import to
     populate an existing slug."""
-    if not page_slug or '/' in page_slug or len(page_slug) > 80:
-        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid page_slug'})
+    if not _valid_slug(page_slug):
+        return error_response('VALIDATION_FAILED', 400,
+            {'detail': 'invalid page_slug — use lowercase letters, digits, and hyphens (max 80 chars)'})
     if PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_DRAFT).first():
         return error_response('VALIDATION_FAILED', 400,
                               {'detail': 'a draft already exists for this slug'})
@@ -968,8 +981,9 @@ def duplicate_page(source_slug):
     Body: { target_slug: '...' }"""
     body = request.get_json(silent=True) or {}
     target = (body.get('target_slug') or '').strip()
-    if not target or '/' in target or len(target) > 80:
-        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid target_slug'})
+    if not _valid_slug(target):
+        return error_response('VALIDATION_FAILED', 400,
+            {'detail': 'invalid target_slug — use lowercase letters, digits, and hyphens (max 80 chars)'})
     src = PageTemplate.query.filter_by(page_slug=source_slug, state=STATE_DRAFT).first()
     if not src:
         return error_response('NOT_FOUND', 404, {'detail': 'no draft on source page'})
