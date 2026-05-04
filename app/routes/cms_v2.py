@@ -306,9 +306,17 @@ def get_page(page_slug):
 @cms_v2_bp.route('/cms/page/<string:page_slug>/draft', methods=['GET'])
 @requires_role('admin')
 def get_page_draft(page_slug):
-    """Admin convenience: same as GET /cms/page/<slug>?state=draft."""
-    request.args = request.args.copy()
-    # delegate
+    """Admin convenience: same as GET /cms/page/<slug>?state=draft.
+
+    BUG FIX (v2.36): the previous implementation copied request.args to make
+    it mutable but never ADDED `state=draft`, so this endpoint was actually
+    returning the PUBLISHED template. The FE happens to call the query-param
+    form (?state=draft) directly, so this didn't get caught — but anyone
+    using the convenience endpoint got the wrong data silently.
+    """
+    args = request.args.copy()
+    args['state'] = STATE_DRAFT
+    request.args = args
     return get_page(page_slug)
 
 

@@ -530,6 +530,31 @@ def test_diff_anonymous_blocked(client):
     assert r.status_code in (401, 403)
 
 
+def test_draft_convenience_endpoint_returns_draft_not_published(client, app):
+    """GET /api/cms/page/<slug>/draft should return draft, not published.
+
+    Regression test for v2.36 bug: the convenience endpoint was forgetting
+    to set state=draft, so it returned the published template silently.
+    """
+    _login_admin(client, app)
+    # Add a hero, then publish — now draft and published are equal
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    })
+    client.post('/api/cms/page/home/publish')
+    # Modify the draft only
+    sid = client.get('/api/cms/page/home?state=draft').get_json()['template']['order'][0]
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'set', 'sid': sid, 'key': 'headline', 'value': 'DRAFT-ONLY-VALUE'}]
+    })
+    # The convenience endpoint should return the draft (with the new value)
+    r = client.get('/api/cms/page/home/draft')
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['state'] == 'draft', body
+    assert body['template']['sections'][sid]['settings']['headline'] == 'DRAFT-ONLY-VALUE'
+
+
 def test_diff_detects_reorder(client, app):
     _login_admin(client, app)
     a = client.patch('/api/cms/page/home/draft', json={
