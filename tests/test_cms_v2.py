@@ -530,6 +530,55 @@ def test_diff_anonymous_blocked(client):
     assert r.status_code in (401, 403)
 
 
+def test_layout_op_persists_animation_value(client, app):
+    """Per-section entrance animation (v2.25) was silently dropped because
+    'animation' wasn't in the layout-op allowlist. Regression test for v2.40."""
+    _login_admin(client, app)
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'layout', 'sid': sid, 'updates': {'animation': 'fade-up'}}]
+    })
+    assert r.status_code == 200, r.get_data(as_text=True)
+    sec = r.get_json()['template']['sections'][sid]
+    assert sec.get('layout', {}).get('animation') == 'fade-up'
+
+
+def test_layout_op_rejects_unknown_animation_value(client, app):
+    _login_admin(client, app)
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    # Garbage value should be silently dropped (not stored)
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'layout', 'sid': sid,
+                     'updates': {'animation': '<script>alert(1)</script>'}}]
+    })
+    assert r.status_code == 200
+    sec = r.get_json()['template']['sections'][sid]
+    assert 'animation' not in (sec.get('layout') or {})
+
+
+def test_layout_op_clears_animation_on_empty_string(client, app):
+    _login_admin(client, app)
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'layout', 'sid': sid, 'updates': {'animation': 'fade-up'}}]
+    })
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'layout', 'sid': sid, 'updates': {'animation': ''}}]
+    })
+    assert r.status_code == 200
+    sec = r.get_json()['template']['sections'][sid]
+    assert 'animation' not in (sec.get('layout') or {})
+
+
 def test_duplicate_enforces_25_section_limit(client, app):
     """Bulk-duplicate (v2.20) must respect the same 25-section soft limit
     that `add` does — otherwise an admin could blast past it.

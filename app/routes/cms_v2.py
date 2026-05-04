@@ -494,14 +494,32 @@ def patch_page_draft(page_slug):
             if section is None:
                 continue
             section.setdefault('layout', {})
+            # BUG FIX (v2.40): `animation` was missing from this allowlist, so
+            # the per-section entrance animation feature shipped in v2.25
+            # silently dropped its value on every save. Added.
             ALLOWED_LAYOUT = {'padding_top', 'padding_bottom', 'background_color',
-                              'background_image', 'text_color', 'max_width'}
+                              'background_image', 'text_color', 'max_width',
+                              'animation'}
+            ALLOWED_ANIMATION_VALUES = {
+                '', 'fade-in', 'fade-up', 'fade-down',
+                'slide-left', 'slide-right', 'zoom-in',
+            }
             for k, v in (patch.get('updates') or {}).items():
-                if k in ALLOWED_LAYOUT:
-                    if v in (None, ''):
-                        section['layout'].pop(k, None)
-                    else:
-                        section['layout'][k] = str(v)
+                if k not in ALLOWED_LAYOUT:
+                    continue
+                if v in (None, ''):
+                    section['layout'].pop(k, None)
+                elif k == 'animation':
+                    s = str(v)
+                    # Reject unknown animation values silently to keep the
+                    # CSS class enumeration tight.
+                    if s in ALLOWED_ANIMATION_VALUES:
+                        if s == '':
+                            section['layout'].pop(k, None)
+                        else:
+                            section['layout'][k] = s
+                else:
+                    section['layout'][k] = str(v)
             affected.add(sid)
 
         elif op == 'add_block':
