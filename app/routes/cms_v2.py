@@ -404,6 +404,13 @@ def patch_page_draft(page_slug):
             src = template['sections'].get(sid)
             if not src:
                 continue
+            # BUG FIX (v2.37): bulk_duplicate (v2.20) could let an admin blast
+            # past 25 sections by duplicating multiple at once. The `add` op
+            # checks the limit; `duplicate` should too.
+            if len(template['order']) >= MAX_SECTIONS_PER_PAGE:
+                return error_response('VALIDATION_FAILED', 400, {
+                    'detail': f'page is at the {MAX_SECTIONS_PER_PAGE}-section limit; remove one before duplicating more.',
+                })
             new_sid = patch.get('new_sid') or _sid()
             template['sections'][new_sid] = deepcopy(src)
             # Insert the duplicate immediately after the source in `order`

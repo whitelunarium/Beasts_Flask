@@ -530,6 +530,29 @@ def test_diff_anonymous_blocked(client):
     assert r.status_code in (401, 403)
 
 
+def test_duplicate_enforces_25_section_limit(client, app):
+    """Bulk-duplicate (v2.20) must respect the same 25-section soft limit
+    that `add` does — otherwise an admin could blast past it.
+    Regression for bug found in v2.37.
+    """
+    _login_admin(client, app)
+    # Fill the page right up to the limit (25 sections)
+    for _ in range(25):
+        client.patch('/api/cms/page/home/draft', json={
+            'patches': [{'op': 'add', 'type': 'text_block'}]
+        })
+    body = client.get('/api/cms/page/home?state=draft').get_json()
+    sid = body['template']['order'][0]
+    # Now duplicating should be rejected
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'duplicate', 'sid': sid}]
+    })
+    assert r.status_code == 400, r.get_data(as_text=True)
+    err = r.get_json() or {}
+    detail = (err.get('detail') or err.get('error', {}).get('detail') or '').lower()
+    assert '25' in detail or 'limit' in detail
+
+
 def test_draft_convenience_endpoint_returns_draft_not_published(client, app):
     """GET /api/cms/page/<slug>/draft should return draft, not published.
 
