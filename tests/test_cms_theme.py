@@ -69,6 +69,39 @@ def test_theme_css_endpoint(client, app):
     assert b'--cms-color-primary: #abcdef' in res.data
 
 
+def test_theme_css_strips_injection_attempts(client, app):
+    """Regression for v2.40 — admin can't break out of CSS property syntax."""
+    _login_admin(client, app)
+    # Plant an injection-shaped value
+    client.patch('/api/cms/theme/draft', json={
+        'updates': {'color_primary': 'red; color: blue; --evil: 1'}
+    })
+    client.post('/api/cms/theme/publish')
+    res = client.get('/api/cms/theme.css')
+    assert res.status_code == 200
+    css = res.data.decode()
+    # Semicolons inside the value are gone (only the property terminator remains)
+    assert '--cms-color-primary: red color: blue --evil: 1;' in css
+    # No injected --evil custom property leaked out
+    assert '--evil:' not in css.replace('--cms-color-primary: red color: blue --evil: 1;', '')
+
+
+def test_theme_css_drops_expression_hooks(client, app):
+    _login_admin(client, app)
+    client.patch('/api/cms/theme/draft', json={
+        'updates': {'color_primary': 'expression(alert(1))', 'color_accent': '#ff0000'}
+    })
+    client.post('/api/cms/theme/publish')
+    res = client.get('/api/cms/theme.css')
+    css = res.data.decode()
+    # The expression token was dropped entirely (note: --cms-color-primary-text
+    # is a separate key and remains, so we check for the property declaration)
+    assert '--cms-color-primary:' not in css
+    assert 'expression' not in css
+    # Other tokens still come through
+    assert '--cms-color-accent: #ff0000' in css
+
+
 def test_visibility_op_persists_device_list(client, app):
     """device_visibility patch op stores the list and renderer applies CSS classes."""
     _login_admin(client, app)

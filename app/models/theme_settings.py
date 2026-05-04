@@ -136,12 +136,32 @@ class ThemeSettings(db.Model):
 
 
 def tokens_to_css(tokens):
-    """Render a token dict to a `:root { --token: value; ... }` CSS string."""
+    """Render a token dict to a `:root { --token: value; ... }` CSS string.
+
+    BUG FIX (v2.40): the previous escape only handled quotes and backslashes
+    but left ; { } < through. A malicious admin could plant a CSS injection
+    payload like 'red; color: blue' and break out of the property — affecting
+    every page on the site. We now also strip those structural characters
+    AND drop tokens whose value contains URL/expression hooks. Admins are
+    generally trusted but defense-in-depth on a global stylesheet is cheap.
+    """
     parts = [':root {']
     for k, v in tokens.items():
         css_var = '--cms-' + k.replace('_', '-')
-        # Escape single quotes / backslashes for safety
-        safe = str(v).replace('\\', '\\\\').replace("'", "\\'")
+        s = str(v)
+        # Defensive sanitization — strip CSS structural chars and < to defeat
+        # css/html injection. Keeps standard property values intact (hex, rgb(),
+        # var(--…), 16px, 1.4rem, etc.).
+        for bad in (';', '{', '}', '<', '>'):
+            s = s.replace(bad, '')
+        # Block CSS expression() / behavior: / -moz-binding hooks (legacy IE
+        # vectors but still). These would only matter on very old browsers,
+        # but cheap to block.
+        low = s.lower()
+        if any(needle in low for needle in ('expression(', 'behavior:', '-moz-binding', 'javascript:', 'url(javascript')):
+            continue
+        # Escape single quotes / backslashes
+        safe = s.replace('\\', '\\\\').replace("'", "\\'")
         parts.append(f'  {css_var}: {safe};')
     parts.append('}')
     return '\n'.join(parts)
