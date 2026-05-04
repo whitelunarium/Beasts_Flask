@@ -34,6 +34,7 @@ cms_v2_bp = Blueprint('cms_v2', __name__)
 
 # Soft enforcement matching Shopify's limit. Caller can disable via DEBUG flag.
 MAX_SECTIONS_PER_PAGE = 25
+MAX_BLOCKS_PER_SECTION = 50
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -527,9 +528,15 @@ def patch_page_draft(page_slug):
             section = template['sections'].get(sid)
             if section is None:
                 continue
-            bid = patch.get('bid') or _sid()
             section.setdefault('blocks', {})
             section.setdefault('block_order', [])
+            # BUG FIX (v2.40): per-section block cap so paste-all and bulk
+            # block ops can't blow up a section.
+            if len(section['block_order']) >= MAX_BLOCKS_PER_SECTION:
+                return error_response('VALIDATION_FAILED', 400, {
+                    'detail': f'section is at the {MAX_BLOCKS_PER_SECTION}-block limit; remove one before adding more.',
+                })
+            bid = patch.get('bid') or _sid()
             section['blocks'][bid] = {
                 'type': patch.get('block_type') or 'item',
                 'settings': patch.get('settings') or {},
@@ -919,7 +926,11 @@ def duplicate_page(source_slug):
 def issue_preview_token(page_slug):
     """Issue a 7-day token that grants read-only access to the page draft."""
     body = request.get_json(silent=True) or {}
-    ttl_days = int(body.get('ttl_days') or 7)
+    # BUG FIX (v2.40): int() raised on non-numeric input → 500 instead of 400
+    try:
+        ttl_days = int(body.get('ttl_days') or 7)
+    except (TypeError, ValueError):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'ttl_days must be an integer'})
     if ttl_days < 1 or ttl_days > 60:
         return error_response('VALIDATION_FAILED', 400, {'detail': 'ttl_days 1..60'})
     tok = PreviewToken.issue(page_slug, created_by=current_user.id, ttl_days=ttl_days)

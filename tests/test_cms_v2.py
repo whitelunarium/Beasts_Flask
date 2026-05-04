@@ -530,6 +530,28 @@ def test_diff_anonymous_blocked(client):
     assert r.status_code in (401, 403)
 
 
+def test_add_block_enforces_50_block_limit(client, app):
+    """Per-section block cap (v2.40) — bulk paste shouldn't blow up a section
+    with thousands of blocks."""
+    _login_admin(client, app)
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'faq'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    # Fill to the limit
+    for _ in range(50):
+        r = client.patch('/api/cms/page/home/draft', json={
+            'patches': [{'op': 'add_block', 'sid': sid, 'block_type': 'item',
+                         'settings': {'question': 'q', 'answer': 'a'}}]
+        })
+        assert r.status_code == 200, r.get_data(as_text=True)
+    # 51st should be rejected
+    r = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add_block', 'sid': sid, 'block_type': 'item'}]
+    })
+    assert r.status_code == 400
+
+
 def test_layout_op_persists_animation_value(client, app):
     """Per-section entrance animation (v2.25) was silently dropped because
     'animation' wasn't in the layout-op allowlist. Regression test for v2.40."""
