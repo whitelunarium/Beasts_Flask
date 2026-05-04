@@ -541,6 +541,136 @@ def patch_page_draft(page_slug):
     }), 200
 
 
+# ─── Diff preview (draft vs published) ──────────────────────────────────────
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/diff', methods=['GET'])
+@requires_role('admin')
+def diff_page(page_slug):
+    """Compute what would change if the current draft is published.
+
+    Returns:
+      {
+        added:     [{sid, type, name?}, ...]   # in draft, not in published
+        removed:   [{sid, type, name?}, ...]   # in published, not in draft
+        modified:  [{sid, type, fields:[{key, before, after}, ...]}, ...]
+        reordered: bool — true if `order` arrays differ
+        order_before: [...sids in published order]
+        order_after:  [...sids in draft order]
+        net:       {added, removed, modified}  # counts
+        no_published: bool — true if there's no published version yet
+      }
+
+    Empty additions/removals/modifications means a no-op publish.
+    """
+    draft = PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_DRAFT).first()
+    if not draft:
+        return error_response('NOT_FOUND', 404, {'detail': 'no draft for this page'})
+    pub = PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_PUBLISHED).first()
+
+    draft_t = draft.get_template() if draft else {'sections': {}, 'order': []}
+    pub_t   = pub.get_template()   if pub   else {'sections': {}, 'order': []}
+    d_secs = draft_t.get('sections') or {}
+    p_secs = pub_t.get('sections')   or {}
+    d_order = draft_t.get('order')   or []
+    p_order = pub_t.get('order')     or []
+
+    added, removed, modified = [], [], []
+    for sid, sec in d_secs.items():
+        if sid not in p_secs:
+            added.append({'sid': sid, 'type': sec.get('type'),
+                          'name': sec.get('name')})
+    for sid, sec in p_secs.items():
+        if sid not in d_secs:
+            removed.append({'sid': sid, 'type': sec.get('type'),
+                            'name': sec.get('name')})
+    # Modified: same sid, different shape
+    for sid, draft_sec in d_secs.items():
+        pub_sec = p_secs.get(sid)
+        if pub_sec is None:
+            continue  # added, already counted
+        field_changes = _diff_section_fields(pub_sec, draft_sec)
+        if field_changes:
+            modified.append({
+                'sid': sid,
+                'type': draft_sec.get('type'),
+                'name': draft_sec.get('name'),
+                'fields': field_changes,
+            })
+
+    return jsonify({
+        'page_slug':    page_slug,
+        'no_published': pub is None,
+        'added':        added,
+        'removed':      removed,
+        'modified':     modified,
+        'reordered':    list(d_order) != list(p_order),
+        'order_before': p_order,
+        'order_after':  d_order,
+        'net': {
+            'added':    len(added),
+            'removed':  len(removed),
+            'modified': len(modified),
+        },
+    }), 200
+
+
+def _diff_section_fields(pub, draft):
+    """Return the list of field-level changes between published and draft
+    versions of one section. Only fields that differ are returned."""
+    changes = []
+    keys_to_check = [
+        ('settings',         pub.get('settings') or {},   draft.get('settings') or {}),
+        ('layout',           pub.get('layout')   or {},   draft.get('layout')   or {}),
+        ('device_visibility', pub.get('device_visibility') or [], draft.get('device_visibility') or []),
+    ]
+    for group, pa, pb in keys_to_check:
+        if isinstance(pa, dict) and isinstance(pb, dict):
+            keys = set(pa) | set(pb)
+            for k in sorted(keys):
+                if pa.get(k) != pb.get(k):
+                    changes.append({
+                        'key': f'{group}.{k}',
+                        'before': pa.get(k),
+                        'after':  pb.get(k),
+                    })
+        elif pa != pb:
+            changes.append({'key': group, 'before': pa, 'after': pb})
+    # Visibility flag is at top level
+    if (pub.get('visible') is False) != (draft.get('visible') is False):
+        changes.append({
+            'key': 'visible',
+            'before': pub.get('visible', True),
+            'after':  draft.get('visible', True),
+        })
+    # Block additions/removals/changes
+    pub_blocks   = pub.get('blocks')   or {}
+    draft_blocks = draft.get('blocks') or {}
+    pub_border   = pub.get('block_order')   or []
+    draft_border = draft.get('block_order') or []
+    if list(pub_border) != list(draft_border):
+        changes.append({
+            'key': 'block_order',
+            'before': pub_border,
+            'after':  draft_border,
+        })
+    block_keys = set(pub_blocks) | set(draft_blocks)
+    for bk in sorted(block_keys):
+        if pub_blocks.get(bk) != draft_blocks.get(bk):
+            changes.append({
+                'key':    f'block[{bk}]',
+                'before': pub_blocks.get(bk),
+                'after':  draft_blocks.get(bk),
+            })
+    # Section name change
+    if pub.get('name') != draft.get('name'):
+        changes.append({
+            'key': 'name',
+            'before': pub.get('name'),
+            'after':  draft.get('name'),
+        })
+    return changes
+
+
 # ─── Publish ─────────────────────────────────────────────────────────────────
 
 @cms_v2_bp.route('/cms/page/<string:page_slug>/publish', methods=['POST'])

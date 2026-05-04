@@ -455,3 +455,96 @@ def test_search_finds_renamed_section_by_name(client, app):
 def test_search_anonymous_blocked(client):
     r = client.get('/api/cms/search?q=anything')
     assert r.status_code in (401, 403)
+
+
+# ── v2.26: publish diff ──────────────────────────────────────────────────────
+
+def test_diff_when_no_published_yet(client, app):
+    _login_admin(client, app)
+    # Add a section, then ask for diff before publishing for the first time
+    add = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = add['template']['order'][0]
+    r = client.get('/api/cms/page/home/diff')
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['no_published'] is True
+    assert any(a['sid'] == sid for a in body['added'])
+    assert body['removed'] == []
+    assert body['modified'] == []
+
+
+def test_diff_after_publish_is_empty(client, app):
+    _login_admin(client, app)
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    })
+    client.post('/api/cms/page/home/publish')
+    r = client.get('/api/cms/page/home/diff')
+    assert r.status_code == 200
+    body = r.get_json()
+    assert body['no_published'] is False
+    assert body['added'] == []
+    assert body['removed'] == []
+    assert body['modified'] == []
+    assert body['reordered'] is False
+    assert body['net'] == {'added': 0, 'removed': 0, 'modified': 0}
+
+
+def test_diff_detects_added_removed_modified(client, app):
+    _login_admin(client, app)
+    # Build a baseline + publish it
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    sid = a['template']['order'][0]
+    b = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'text_block'}]
+    }).get_json()
+    text_sid = [s for s in b['template']['order'] if s != sid][0]
+    client.post('/api/cms/page/home/publish')
+    # Now make some changes that haven't been published yet:
+    #   1. modify hero headline
+    #   2. delete the text block
+    #   3. add a new FAQ
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [
+            {'op': 'set',    'sid': sid,      'key': 'headline', 'value': 'Brand new headline'},
+            {'op': 'remove', 'sid': text_sid},
+            {'op': 'add',    'type': 'faq'},
+        ]
+    })
+    r = client.get('/api/cms/page/home/diff')
+    assert r.status_code == 200
+    body = r.get_json()
+    assert any(rmv['sid'] == text_sid for rmv in body['removed']),  body
+    assert any(m['sid'] == sid       for m in body['modified']),    body
+    assert body['net']['added']    >= 1
+    assert body['net']['modified'] >= 1
+    assert body['net']['removed'] == 1
+
+
+def test_diff_anonymous_blocked(client):
+    r = client.get('/api/cms/page/home/diff')
+    assert r.status_code in (401, 403)
+
+
+def test_diff_detects_reorder(client, app):
+    _login_admin(client, app)
+    a = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'hero'}]
+    }).get_json()
+    b = client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'add', 'type': 'text_block'}]
+    }).get_json()
+    client.post('/api/cms/page/home/publish')
+    # Reverse the order in the draft
+    reversed_order = list(reversed(b['template']['order']))
+    client.patch('/api/cms/page/home/draft', json={
+        'patches': [{'op': 'reorder', 'order': reversed_order}]
+    })
+    r = client.get('/api/cms/page/home/diff')
+    body = r.get_json()
+    assert body['reordered'] is True
+    assert body['order_before'] != body['order_after']
