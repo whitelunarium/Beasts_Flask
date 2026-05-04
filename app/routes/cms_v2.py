@@ -821,13 +821,29 @@ def patch_page_seo(page_slug):
     updates = body.get('updates') or {}
     if not isinstance(updates, dict):
         return error_response('VALIDATION_FAILED', 400, {'detail': 'updates must be an object'})
+    # BUG FIX (v2.40): truncate to the column max-lengths instead of risking
+    # a 500 on too-long input (SQLite silently accepts but Postgres errors).
+    # Better to clip than to fail.
+    SEO_MAX = {
+        'title':           200, 'description':     400,
+        'og_image_url':    500, 'og_title':        200, 'og_description':  400,
+        'twitter_card':     40, 'canonical_url':   500, 'robots':           80,
+    }
     row = PageSeo.query.filter_by(page_slug=page_slug).first()
     if not row:
         row = PageSeo(page_slug=page_slug)
         db.session.add(row)
     for k, v in updates.items():
-        if k in SEO_FIELDS:
-            setattr(row, k, str(v) if v is not None else None)
+        if k not in SEO_FIELDS:
+            continue
+        if v is None:
+            setattr(row, k, None)
+            continue
+        s = str(v)
+        cap = SEO_MAX.get(k)
+        if cap and len(s) > cap:
+            s = s[:cap]
+        setattr(row, k, s)
     row.updated_at = datetime.utcnow()
     row.updated_by = current_user.id
     db.session.commit()
