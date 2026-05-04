@@ -15,6 +15,33 @@ site_config_bp = Blueprint('site_config', __name__)
 
 # Default config entries — seeding is additive (new keys added, existing values preserved)
 DEFAULT_CONFIG = [
+    # ── Navbar (top of every page) ───────────────────────────────────────────────
+    {'key': 'brand_name',           'label': 'Brand Name',                  'description': 'Organization name shown in the top-left of the navbar', 'group': 'navbar', 'value': 'Poway NEC & FSC'},
+    {'key': 'brand_tagline',        'label': 'Brand Tagline',               'description': 'Tagline under the brand name',                            'group': 'navbar', 'value': 'Neighbors Helping Neighbors'},
+    {'key': 'brand_logo_url',       'label': 'Brand Logo URL',              'description': 'Logo image shown in the navbar (use the asset library)', 'group': 'navbar', 'value': ''},
+    {'key': 'nav_label_about',          'label': 'Nav Link: About',          'description': 'Label for the About link in the top navigation',         'group': 'navbar', 'value': 'About'},
+    {'key': 'nav_label_programs',       'label': 'Nav Link: Programs',       'description': 'Label for the Programs and Services link',              'group': 'navbar', 'value': 'Programs and Services'},
+    {'key': 'nav_label_preparedness',   'label': 'Nav Link: Preparedness',   'description': 'Label for the Preparedness & Help link',                'group': 'navbar', 'value': 'Preparedness & Help'},
+    {'key': 'nav_label_events',         'label': 'Nav Link: Events',         'description': 'Label for the Community Events link',                   'group': 'navbar', 'value': 'Community Events'},
+    {'key': 'nav_label_neighborhood',   'label': 'Nav Link: Neighborhood',   'description': 'Label for the Find Your Neighborhood link',             'group': 'navbar', 'value': 'Find Your Neighborhood'},
+    {'key': 'nav_label_contact',        'label': 'Nav Link: Contact',        'description': 'Label for the Contact link',                            'group': 'navbar', 'value': 'Contact'},
+    {'key': 'nav_label_login',          'label': 'Nav Link: Login',          'description': 'Label for the Login link in the navbar',                'group': 'navbar', 'value': 'Login'},
+    {'key': 'nav_label_register',       'label': 'Nav Link: Register',       'description': 'Label for the Register link in the navbar',             'group': 'navbar', 'value': 'Register'},
+    {'key': 'nav_donate_label',         'label': 'Donate Button Label',      'description': 'Text on the green Donate button in the navbar',         'group': 'navbar', 'value': 'Donate Now'},
+    # ── Footer (bottom of every page) ────────────────────────────────────────────
+    {'key': 'footer_logo_url',          'label': 'Footer Logo URL',          'description': 'Logo image in the footer',                              'group': 'footer', 'value': ''},
+    {'key': 'footer_org_name',          'label': 'Footer Org Name',          'description': 'Organization name in the footer',                       'group': 'footer', 'value': 'Poway Neighborhood Emergency Corps'},
+    {'key': 'footer_tagline',           'label': 'Footer Tagline',           'description': 'Long tagline paragraph in the footer',                  'group': 'footer', 'value': 'Neighbor helping neighbor since 1995. PNEC helps Poway residents prepare, connect, and support one another during emergencies.'},
+    {'key': 'footer_address',           'label': 'Footer Address',           'description': 'Organization address line in the footer',               'group': 'footer', 'value': 'Poway, CA 92064'},
+    {'key': 'footer_email',             'label': 'Footer Email',             'description': 'Email address shown in the footer',                     'group': 'footer', 'value': 'powaynec@gmail.com'},
+    {'key': 'footer_website',           'label': 'Footer Website',           'description': 'Website URL shown in the footer',                       'group': 'footer', 'value': 'powaynec.com'},
+    {'key': 'footer_newsletter_heading', 'label': 'Newsletter Heading',      'description': 'Heading on the newsletter signup card in the footer',   'group': 'footer', 'value': 'Stay Prepared'},
+    {'key': 'footer_newsletter_blurb',   'label': 'Newsletter Blurb',        'description': 'Description text on the newsletter card',               'group': 'footer', 'value': 'Stay informed about community meetings and activities. Join our mailing list today.'},
+    {'key': 'footer_newsletter_cta',     'label': 'Newsletter CTA',          'description': 'Button text on the newsletter signup card',             'group': 'footer', 'value': 'Join Our Mailing List'},
+    {'key': 'footer_newsletter_disclaimer', 'label': 'Newsletter Disclaimer','description': 'Small print under the newsletter signup',               'group': 'footer', 'value': 'We respect your privacy. Unsubscribe at any time.'},
+    {'key': 'footer_copyright',         'label': 'Footer Copyright',         'description': 'Copyright line at the very bottom of the footer',       'group': 'footer', 'value': '© 2026 Poway Neighborhood Emergency Corps. All rights reserved.'},
+    {'key': 'footer_link_contact',      'label': 'Footer Link: Contact',     'description': 'Footer-bottom Contact link label',                      'group': 'footer', 'value': 'Contact'},
+    {'key': 'footer_link_privacy',      'label': 'Footer Link: Privacy',     'description': 'Footer-bottom Privacy Policy link label',               'group': 'footer', 'value': 'Privacy Policy'},
     # ── Contact ──────────────────────────────────────────────────────────────────
     {'key': 'contact_email',   'label': 'Contact Email',        'description': 'Main contact email shown on the Contact page', 'group': 'contact', 'value': 'powaynec@gmail.com'},
     {'key': 'contact_phone',   'label': 'Contact Phone',        'description': 'Phone number shown on the Contact page',        'group': 'contact', 'value': ''},
@@ -49,10 +76,9 @@ DEFAULT_CONFIG = [
      'value': '<p>The collaboration with the Poway Auxiliary Communications Team (PACT) is an important collaboration for emergency communications during disasters. During a disaster, PACT will coordinate and collaborate as needed to provide communication services and share important information between the city and each identified neighborhood through the Neighborhood Emergency Coordinators (NECs) and Ham Radio Operators.</p>'},
     {'key': 'programs_large_animal_para', 'label': 'Large Animal Emergency — Paragraph', 'description': 'HTML for the Large Animal Emergency Planning section on the Programs page', 'group': 'page_programs',
      'value': '<p>Poway is the City in the Country and many of our residents have extended family in the form of horses, donkeys, goats, and backyard chickens. PNEC has gathered resources and developed best practices to help community members plan for their animals during an emergency.</p><p>Each year in November, PNEC hosts a Large Animal Emergency Planning community meeting with a panel of public safety subject matter experts.</p>'},
-    # ── Footer & org ─────────────────────────────────────────────────────────────
-    {'key': 'footer_tagline',   'label': 'Footer Tagline',      'description': 'Short line shown in the site footer',           'group': 'footer', 'value': 'Neighbors Helping Neighbors — Stay Prepared.'},
-    {'key': 'footer_copyright', 'label': 'Footer Copyright',    'description': 'Copyright line in the footer',                  'group': 'footer', 'value': '© Poway Neighborhood Emergency Corps. All rights reserved.'},
     # ── Organization ─────────────────────────────────────────────────────────────
+    # NOTE: footer_tagline + footer_copyright already declared in the Footer
+    # group at the top of this list (v2.31) — don't redeclare them here.
     {'key': 'org_name',       'label': 'Organization Name',    'description': 'Full official organization name',                'group': 'org', 'value': 'Poway Neighborhood Emergency Corps'},
     {'key': 'org_short_name', 'label': 'Short Name / Acronym', 'description': 'Abbreviation used in navigation and badges',    'group': 'org', 'value': 'PNEC'},
     {'key': 'donate_url',     'label': 'Donate Link URL',      'description': 'URL for the donation button',                   'group': 'org', 'value': ''},
