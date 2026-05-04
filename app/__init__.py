@@ -440,6 +440,8 @@ def _register_blueprints(app):
     from app.routes.cms_v2 import cms_v2_bp
     from app.routes.cms_theme import cms_theme_bp
     from app.routes.cms_ai import cms_ai_bp
+    from app.routes.site_config import site_config_bp
+    from app.routes.page_overrides import page_overrides_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -459,6 +461,10 @@ def _register_blueprints(app):
     app.register_blueprint(cms_v2_bp,         url_prefix='/api')
     app.register_blueprint(cms_theme_bp,      url_prefix='/api')
     app.register_blueprint(cms_ai_bp,         url_prefix='/api')
+    # v1 CMS — site-config (cross-page values) + page-overrides (per-page text).
+    # Both feed hydrate.js's data-cms-config / data-cms-override swap.
+    app.register_blueprint(site_config_bp,    url_prefix='/api')
+    app.register_blueprint(page_overrides_bp, url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
