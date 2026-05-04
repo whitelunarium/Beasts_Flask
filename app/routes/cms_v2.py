@@ -209,12 +209,30 @@ def get_audit_log():
     if page_slug:
         oq = oq.filter_by(page_slug=page_slug)
     for row in oq.order_by(PageOverride.updated_at.desc()).limit(limit).all():
+        # Auto-tagged keys (auto__h1_xxx) are noisier — give them a friendlier
+        # detail line.
+        is_auto = (row.element_id or '').startswith('auto__')
         events.append({
             'kind':       'override',
             'page_slug':  row.page_slug,
+            'element_id': row.element_id,
+            'is_auto':    is_auto,
             'updated_at': row.updated_at.isoformat() if row.updated_at else None,
             'updated_by': row.updated_by,
-            'detail':     f'Override {row.element_id} on {row.page_slug}',
+            'detail':     f'Inline-edited "{row.element_id}" on {row.page_slug}'
+                          if not is_auto else
+                          f'Inline-edited text on {row.page_slug}',
+        })
+
+    # Site-config (cross-page settings — navbar/footer)
+    from app.models.site_config import SiteConfig
+    for row in SiteConfig.query.order_by(SiteConfig.updated_at.desc()).limit(limit).all():
+        events.append({
+            'kind':       'site_config',
+            'cfg_key':    row.key,
+            'updated_at': row.updated_at.isoformat() if row.updated_at else None,
+            'updated_by': row.updated_by,
+            'detail':     f'Site config "{row.key}" updated',
         })
 
     # Resolve user display names
