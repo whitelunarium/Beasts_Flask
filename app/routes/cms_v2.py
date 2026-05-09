@@ -22,6 +22,7 @@ from flask_login import current_user
 
 from app import db
 from app.models.page_template import PageTemplate, STATE_DRAFT, STATE_PUBLISHED, VALID_STATES
+from app.models.page_template_revision import PageTemplateRevision, record_revision
 from app.models.preview_token import PreviewToken
 from app.models.page_seo import PageSeo, SEO_FIELDS, DEFAULT_SEO
 from app.services.cms_renderer import render_page, render_section
@@ -237,6 +238,47 @@ def _preview_blurb(section):
     return (section.get('name') or section.get('type') or '')
 
 
+def _summarize_op(patch, before, after):
+    """Phase 2 helper: turn a single patch op into a one-line summary that
+    reads well in the history panel."""
+    op = (patch or {}).get('op', 'unknown')
+    sid = (patch or {}).get('sid')
+    if op == 'add':
+        return f"Added {patch.get('type', 'section')}"
+    if op == 'remove':
+        section = (before.get('sections') or {}).get(sid) or {}
+        return f"Removed {section.get('type', 'section')}"
+    if op == 'duplicate':
+        return f"Duplicated section"
+    if op == 'reorder':
+        return f"Reordered sections"
+    if op == 'set':
+        return f"Updated {patch.get('key', 'field')}"
+    if op == 'bulk_set':
+        return f"Replaced section settings"
+    if op == 'visibility':
+        return f"{'Showed' if patch.get('visible') else 'Hid'} section"
+    if op == 'rename':
+        return f"Renamed to {(patch.get('name') or '').strip()[:40]}"
+    if op == 'replace_template':
+        return f"Replaced full page template"
+    if op == 'add_block':
+        return f"Added {patch.get('block_type', 'block')}"
+    if op == 'remove_block':
+        return f"Removed block"
+    if op == 'reorder_blocks':
+        return f"Reordered blocks"
+    if op == 'set_block':
+        return f"Updated block.{patch.get('key', 'field')}"
+    if op == 'device_visibility':
+        on = patch.get('on') or {}
+        on_str = '+'.join(k for k, v in on.items() if v)
+        return f"Visibility: {on_str or 'none'}"
+    if op == 'layout':
+        return f"Updated layout/spacing"
+    return op
+
+
 # ─── Audit log ───────────────────────────────────────────────────────────────
 
 @cms_v2_bp.route('/cms/audit', methods=['GET'])
@@ -429,6 +471,9 @@ def patch_page_draft(page_slug):
 
     row = _get_or_create_template(page_slug, STATE_DRAFT)
     template = row.get_template()
+    # Phase 2: snapshot the BEFORE state so we can record a revision after
+    # the patch loop completes (only if it actually changed something).
+    pre_snapshot = deepcopy(template)
     reg = _registry()
     if not reg:
         return error_response('SERVER_ERROR', 500, {'detail': 'cms registry not initialized'})
@@ -657,6 +702,30 @@ def patch_page_draft(page_slug):
         else:
             return error_response('VALIDATION_FAILED', 400, {'detail': f'unknown op {op!r}'})
 
+    # Phase 2: only record a revision if the template actually changed.
+    # Re-loading after patch ops avoids comparing local mutations against
+    # the same dict; we compare the original snapshot against `template`.
+    if template != pre_snapshot:
+        # Build a short summary so the history panel reads well. We
+        # describe the FIRST op (most patches are 1-op anyway); for batch
+        # patches we mention the count.
+        first = patches[0] if patches else {}
+        first_op = (first or {}).get('op', 'unknown')
+        first_sid = (first or {}).get('sid')
+        if len(patches) == 1:
+            summary = _summarize_op(first, pre_snapshot, template)
+        else:
+            summary = f'{len(patches)} edits in batch (first: {first_op})'
+        record_revision(
+            page_slug=page_slug,
+            state=STATE_DRAFT,
+            op=first_op,
+            snapshot=pre_snapshot,
+            op_target_sid=first_sid,
+            op_summary=summary,
+            created_by=current_user.id if current_user.is_authenticated else None,
+        )
+
     row.set_template(template)
     row.updated_at = datetime.utcnow()
     row.updated_by = current_user.id if current_user.is_authenticated else None
@@ -672,6 +741,100 @@ def patch_page_draft(page_slug):
         'template':       template,
         'sections_html':  rendered,
         'affected_sids':  sorted(affected),
+    }), 200
+
+
+# ─── Phase 2: Revision history + revert ─────────────────────────────────────
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/revisions', methods=['GET'])
+@requires_role('admin')
+def list_revisions(page_slug):
+    """Return the most recent revisions for a page, newest first.
+
+    Each row is a snapshot of the template that existed BEFORE the patch
+    that's being described — i.e. reverting to revision N restores the
+    state from before edit N landed.
+    """
+    if not _valid_slug(page_slug):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid page slug'})
+
+    state = (request.args.get('state') or STATE_DRAFT).strip()
+    if state not in VALID_STATES:
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid state'})
+
+    limit = min(int(request.args.get('limit') or 50), 200)
+
+    rows = (PageTemplateRevision.query
+            .filter_by(page_slug=page_slug, state=state)
+            .order_by(PageTemplateRevision.created_at.desc())
+            .limit(limit)
+            .all())
+
+    # Hydrate updated_by_name for each row in one pass
+    from app.models.user import User
+    user_ids = {r.created_by for r in rows if r.created_by}
+    users = {u.id: u for u in User.query.filter(User.id.in_(user_ids)).all()} if user_ids else {}
+    out = []
+    for r in rows:
+        d = r.to_dict()
+        u = users.get(r.created_by)
+        d['created_by_name'] = (u.name or u.uid) if u else ('?' if r.created_by else 'system')
+        out.append(d)
+
+    return jsonify({'revisions': out, 'count': len(out)}), 200
+
+
+@cms_v2_bp.route('/cms/page/<string:page_slug>/revert/<int:revision_id>',
+                 methods=['POST'])
+@requires_role('admin')
+def revert_revision(page_slug, revision_id):
+    """Restore the page's template to the snapshot stored in revision N.
+
+    Important: reverting itself records a NEW revision (so you can undo a
+    revert). The snapshot for the new revision is the BEFORE state of the
+    revert — i.e. the current template right now, before we restore.
+    """
+    if not _valid_slug(page_slug):
+        return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid page slug'})
+
+    rev = PageTemplateRevision.query.filter_by(id=revision_id, page_slug=page_slug).first()
+    if not rev:
+        return error_response('NOT_FOUND', 404, {'detail': 'revision not found'})
+
+    row = _get_or_create_template(page_slug, rev.state)
+    pre_snapshot = row.get_template()
+    new_template = rev.get_snapshot()
+
+    # Record the revert as its own revision so the user can undo it.
+    record_revision(
+        page_slug=page_slug,
+        state=rev.state,
+        op='revert',
+        snapshot=pre_snapshot,
+        op_summary=f'Reverted to revision #{revision_id}',
+        created_by=current_user.id if current_user.is_authenticated else None,
+    )
+
+    row.set_template(new_template)
+    row.updated_at = datetime.utcnow()
+    row.updated_by = current_user.id if current_user.is_authenticated else None
+    db.session.commit()
+
+    # Re-render every section in the restored template — the editor will
+    # hot-swap the iframe without reloading.
+    reg = _registry()
+    rendered = {}
+    for sid, section in (new_template.get('sections') or {}).items():
+        if reg:
+            try:
+                rendered[sid] = render_section(sid, section, reg)
+            except Exception:
+                pass
+
+    return jsonify({
+        'message':       f'Reverted to revision #{revision_id}.',
+        'template':      new_template,
+        'sections_html': rendered,
     }), 200
 
 
@@ -811,13 +974,30 @@ def _diff_section_fields(pub, draft):
 @requires_role('admin')
 def publish_page(page_slug):
     """Copy draft → published. Idempotent — produces the same outcome whether
-    a published row exists or not."""
+    a published row exists or not.
+
+    Phase 2: snapshots the existing PUBLISHED template before overwriting,
+    so an admin can revert a botched publish.
+    """
     draft = PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_DRAFT).first()
     if not draft:
         return error_response('NOT_FOUND', 404, {'detail': 'no draft to publish'})
 
     pub = PageTemplate.query.filter_by(page_slug=page_slug, state=STATE_PUBLISHED).first()
     now = datetime.utcnow()
+
+    # Snapshot the BEFORE-publish state of the published row so a revert
+    # can put the live site back to where it was.
+    if pub:
+        record_revision(
+            page_slug=page_slug,
+            state=STATE_PUBLISHED,
+            op='publish',
+            snapshot=pub.get_template(),
+            op_summary='Published draft (overwrote previous published version)',
+            created_by=current_user.id if current_user.is_authenticated else None,
+        )
+
     if pub:
         pub.template_json = draft.template_json
         pub.published_at  = now
