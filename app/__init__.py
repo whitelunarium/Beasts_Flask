@@ -436,7 +436,9 @@ def _register_blueprints(app):
     from app.routes.gemini import gemini_bp
     from app.routes.news import news_bp
     from app.routes.blog import blog_bp
-    from app.routes.cms_manifest import cms_manifest_bp
+    # cms_manifest_bp removed in Phase 4 cleanup — only the retired v1
+    # editor consumed /api/cms/manifest/<slug>, so the route file +
+    # blueprint registration are gone.
     from app.routes.cms_v2 import cms_v2_bp
     from app.routes.cms_theme import cms_theme_bp
     from app.routes.cms_ai import cms_ai_bp
@@ -457,7 +459,6 @@ def _register_blueprints(app):
     app.register_blueprint(gemini_bp,        url_prefix='/api')
     app.register_blueprint(news_bp,          url_prefix='/api')
     app.register_blueprint(blog_bp,          url_prefix='/api')
-    app.register_blueprint(cms_manifest_bp,   url_prefix='/api')
     app.register_blueprint(cms_v2_bp,         url_prefix='/api')
     app.register_blueprint(cms_theme_bp,      url_prefix='/api')
     app.register_blueprint(cms_ai_bp,         url_prefix='/api')
