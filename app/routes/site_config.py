@@ -3,7 +3,7 @@
 
 from datetime import datetime
 
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, request, jsonify, current_app
 from flask_login import current_user
 
 from app import db
@@ -165,14 +165,40 @@ def bulk_update_config():
 @site_config_bp.route('/site-config/upload-image', methods=['POST'])
 @requires_role('admin')
 def upload_cms_image():
-    """Upload an image for use in CMS config (returns URL). Admin only."""
-    from app.services.media_service import save_uploaded_file, determine_media_type
+    """Upload an image for use in CMS config (returns URL). Admin only.
+
+    Phase 3 (v3): also creates a MediaPost row so the editor's asset
+    library shows everything admins have uploaded — previously the
+    library only listed files added through /api/media POST, which the
+    editor never called, leaving the library empty for normal users.
+    """
+    from app.services.media_service import save_uploaded_file, determine_media_type, create_media_post
+    from flask_login import current_user
     file = request.files.get('file')
     if not file or not file.filename:
         return error_response('VALIDATION_FAILED', 400, {'detail': 'file is required'})
     url, err = save_uploaded_file(file)
     if err:
         return error_response(err, 400)
+
+    # Best-effort MediaPost — failure here MUST NOT break the upload,
+    # because the file is already on disk and the URL is what the
+    # editor needs back. We just log + continue.
+    try:
+        title = (request.form.get('title') or file.filename or 'Untitled').strip()[:140]
+        caption = (request.form.get('caption') or '').strip()[:500]
+        media_type = determine_media_type(file.filename)
+        uploaded_by = current_user.id if current_user.is_authenticated else None
+        create_media_post(title=title, caption=caption,
+                          media_url=url, media_type=media_type,
+                          uploaded_by=uploaded_by)
+    except Exception as e:
+        # Don't fail the upload over a metadata write
+        try:
+            current_app.logger.warning('upload-image: MediaPost create failed: %s', e)
+        except Exception:
+            pass
+
     return jsonify({'url': url}), 200
 
 
