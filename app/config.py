@@ -43,13 +43,22 @@ class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # ─── File uploads ─────────────────────────────────────────────────────────
-    MAX_CONTENT_LENGTH = 10 * 1024 * 1024  # 10 MB
+    # Bumped 10→20 MB to match the upload-page UI ("Max 20MB"). Was a
+    # silent-413 footgun: coordinators uploading event photos from a
+    # phone hit a baffling failure with no actionable error UI.
+    MAX_CONTENT_LENGTH = 20 * 1024 * 1024  # 20 MB
     UPLOAD_EXTENSIONS = ['.jpg', '.jpeg', '.png', '.gif', '.webp', '.mp4']
     UPLOAD_FOLDER = os.path.join(os.path.dirname(__file__), '..', 'instance', 'uploads')
 
     # ─── Admin seed credentials ────────────────────────────────────────────────
+    # SECURITY: ADMIN_PASSWORD MUST be set via env. The previous fallback
+    # ('changeme123') seeded a known admin account on every fresh deploy
+    # — anyone who'd read the public repo could log into prod as admin.
+    # Now: if ADMIN_PASSWORD is unset OR equals a known-bad sentinel, the
+    # _seed_admin_if_missing() boot step refuses to create an admin and
+    # logs a loud warning instead.
     ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL') or 'admin@powaynec.com'
-    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD') or 'changeme123'
+    ADMIN_PASSWORD = os.environ.get('ADMIN_PASSWORD')   # NO fallback — see __init__.py:_seed_admin_if_missing
     ADMIN_DISPLAY_NAME = os.environ.get('ADMIN_DISPLAY_NAME') or 'PNEC Admin'
 
     # ─── Email (Flask-Mail) ────────────────────────────────────────────────────

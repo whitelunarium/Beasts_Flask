@@ -484,9 +484,25 @@ def _seed_admin_if_missing(app):
     if existing_admin:
         return
 
+    # SECURITY: refuse to seed an admin without an explicit env-supplied
+    # password. The previous fallback ('changeme123') seeded a known
+    # account on every fresh deploy. Sentinel values are also rejected.
+    pw = app.config.get('ADMIN_PASSWORD')
+    BAD_SENTINELS = {None, '', 'changeme', 'changeme123', 'password', 'admin', 'admin123'}
+    if pw in BAD_SENTINELS or (isinstance(pw, str) and len(pw) < 12):
+        try:
+            app.logger.warning(
+                '_seed_admin_if_missing: refusing to seed admin — '
+                'set ADMIN_PASSWORD env var to a strong (>=12 char) secret. '
+                'No admin will exist until this is provided.'
+            )
+        except Exception:
+            pass
+        return
+
     admin = User(
         email=app.config['ADMIN_EMAIL'],
-        password_hash=generate_password_hash(app.config['ADMIN_PASSWORD'], method='pbkdf2:sha256'),
+        password_hash=generate_password_hash(pw, method='pbkdf2:sha256'),
         display_name=app.config['ADMIN_DISPLAY_NAME'],
         role='admin',
         is_active=True,
