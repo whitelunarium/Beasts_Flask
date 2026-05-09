@@ -128,39 +128,103 @@ def list_pages():
 @cms_v2_bp.route('/cms/search', methods=['GET'])
 @requires_role('admin')
 def search_sections():
-    """Find every section across every page that matches a query.
+    """Find every editable thing across the site that matches a query.
+
+    v3 (Phase 1): now searches sections AND site-config keys AND
+    page-overrides AND theme tokens, so admins can find e.g. the footer
+    copyright text (which lives in site_config, not in any section).
+
     Query params:
-      q:    text to search inside section settings (case-insensitive)
-      type: filter to one section type
-      state: 'draft' (default) | 'published'
+      q:     text to search (case-insensitive, substring)
+      type:  filter to one section type (sections only)
+      state: 'draft' (default) | 'published' (sections + theme only)
+      kinds: comma-separated subset of {section, override, site_config, theme}
+             — defaults to all four
     """
+    from app.models.site_config import SiteConfig
+    from app.models.page_override import PageOverride
+    from app.models.theme_settings import ThemeSettings
+
     q = (request.args.get('q') or '').strip().lower()
     type_filter = (request.args.get('type') or '').strip()
     state = (request.args.get('state') or STATE_DRAFT).strip()
     if state not in VALID_STATES:
         return error_response('VALIDATION_FAILED', 400, {'detail': 'invalid state'})
-    rows = PageTemplate.query.filter_by(state=state).all()
+    kinds = set(((request.args.get('kinds') or 'section,override,site_config,theme')
+                 .split(',')))
+
     hits = []
-    for row in rows:
-        tpl = row.get_template()
-        for sid, sec in (tpl.get('sections') or {}).items():
-            if type_filter and sec.get('type') != type_filter:
-                continue
-            if q:
-                blob = json.dumps(sec.get('settings') or {}, default=str).lower() + \
-                       json.dumps(sec.get('blocks') or {}, default=str).lower() + \
-                       (sec.get('name') or '').lower() + \
-                       (sec.get('type') or '').lower()
-                if q not in blob:
+
+    # Sections (existing behavior)
+    if 'section' in kinds:
+        rows = PageTemplate.query.filter_by(state=state).all()
+        for row in rows:
+            tpl = row.get_template()
+            for sid, sec in (tpl.get('sections') or {}).items():
+                if type_filter and sec.get('type') != type_filter:
                     continue
+                if q:
+                    blob = (json.dumps(sec.get('settings') or {}, default=str).lower()
+                            + json.dumps(sec.get('blocks') or {}, default=str).lower()
+                            + (sec.get('name') or '').lower()
+                            + (sec.get('type') or '').lower())
+                    if q not in blob:
+                        continue
+                hits.append({
+                    'kind':      'section',
+                    'page_slug': row.page_slug,
+                    'sid':       sid,
+                    'type':      sec.get('type'),
+                    'name':      sec.get('name'),
+                    'preview':   _preview_blurb(sec),
+                })
+
+    # Site-config keys (footer copyright, brand name, nav labels, etc.)
+    if 'site_config' in kinds and not type_filter:
+        for cfg in SiteConfig.query.all():
+            v = cfg.value if isinstance(cfg.value, str) else json.dumps(cfg.value or '', default=str)
+            if q and q not in (cfg.key.lower() + ' ' + v.lower()):
+                continue
             hits.append({
-                'page_slug': row.page_slug,
-                'sid':       sid,
-                'type':      sec.get('type'),
-                'name':      sec.get('name'),
-                'preview':   _preview_blurb(sec),
+                'kind':      'site_config',
+                'cfg_key':   cfg.key,
+                'preview':   (v or '')[:120],
+                'name':      cfg.key,
             })
-    return jsonify({'hits': hits[:200], 'count': len(hits)}), 200
+
+    # Page overrides (per-page text/url overrides via data-cms-override)
+    if 'override' in kinds and not type_filter:
+        for ov in PageOverride.query.all():
+            v = ov.value if isinstance(ov.value, str) else json.dumps(ov.value or '', default=str)
+            if q and q not in (
+                (ov.element_id or '').lower() + ' ' + (ov.page_slug or '').lower() + ' ' + v.lower()
+            ):
+                continue
+            hits.append({
+                'kind':       'override',
+                'page_slug':  ov.page_slug,
+                'element_id': ov.element_id,
+                'preview':    (v or '')[:120],
+                'name':       ov.element_id,
+            })
+
+    # Theme tokens (color hex, font names, etc.)
+    if 'theme' in kinds and not type_filter:
+        theme = ThemeSettings.query.filter_by(state=state).first()
+        if theme:
+            tokens = theme.tokens or {}
+            for k, v in tokens.items():
+                vs = v if isinstance(v, str) else json.dumps(v, default=str)
+                if q and q not in (k.lower() + ' ' + vs.lower()):
+                    continue
+                hits.append({
+                    'kind':     'theme',
+                    'cfg_key':  k,
+                    'preview':  (vs or '')[:120],
+                    'name':     k,
+                })
+
+    return jsonify({'hits': hits[:300], 'count': len(hits)}), 200
 
 
 def _preview_blurb(section):

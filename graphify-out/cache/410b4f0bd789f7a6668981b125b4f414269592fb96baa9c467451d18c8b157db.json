@@ -1,0 +1,1 @@
+{"nodes": [{"id": "rds_init", "label": "rds_init.py", "file_type": "code", "source_file": "scripts/old/rds_init.py", "source_location": "L1"}], "edges": [{"source": "rds_init", "target": "psycopg2", "relation": "imports", "confidence": "EXTRACTED", "source_file": "scripts/old/rds_init.py", "source_location": "L2", "weight": 1.0}]}

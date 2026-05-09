@@ -24,11 +24,13 @@ def proxy_gemini():
     prompt = data.get('prompt', '')
     user_text = data.get('text') or data.get('message') or data.get('question') or ''
     history = data.get('history') or []
+    image_data = data.get('image_data')
+    image_mime_type = data.get('image_mime_type', 'image/jpeg')
 
     if _is_rate_limited():
         return error_response('RATE_LIMITED', 429, {'detail': 'Too many chatbot requests. Please wait a minute and try again.'})
 
-    text, err = gemini_service.generate_chat_response(prompt, user_text, history)
+    text, err = gemini_service.generate_chat_response(prompt, user_text, history, image_data, image_mime_type)
     if err == 'MISSING_MESSAGE':
         return error_response('VALIDATION_FAILED', 400, {'detail': 'Missing chatbot message.'})
     if err == 'GEMINI_NOT_CONFIGURED':
