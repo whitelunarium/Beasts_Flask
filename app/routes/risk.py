@@ -1,7 +1,7 @@
 # app/routes/risk.py
 # Responsibility: Risk API endpoint — returns current fire/flood/heat assessment.
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app.services import risk_service
 from app.utils.errors import error_response
 
@@ -22,5 +22,12 @@ def get_risk():
         neighborhood_id = request.args.get('neighborhood_id', type=int)
         assessment = risk_service.get_risk_assessment(neighborhood_id=neighborhood_id)
         return jsonify(assessment), 200
-    except Exception as e:
-        return error_response('SERVER_ERROR', 503, {'detail': str(e)})
+    except Exception:
+        # SECURITY: do NOT pass str(e) to the client — exception messages
+        # from Open-Meteo or SQLAlchemy frequently include URLs (with
+        # API keys), file paths, env-var names, etc. Log server-side.
+        try:
+            current_app.logger.exception('risk.get_risk failed')
+        except Exception:
+            pass
+        return error_response('SERVER_ERROR', 503, {'detail': 'Risk service unavailable.'})
