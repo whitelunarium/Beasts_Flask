@@ -462,6 +462,7 @@ def _register_blueprints(app):
     from app.routes.site_config import site_config_bp
     from app.routes.page_overrides import page_overrides_bp
     from app.routes.security import security_bp
+    from app.routes.live import live_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -485,6 +486,10 @@ def _register_blueprints(app):
     app.register_blueprint(site_config_bp,    url_prefix='/api')
     app.register_blueprint(page_overrides_bp, url_prefix='/api')
     app.register_blueprint(security_bp,       url_prefix='/api')
+    # v3.8 — chatbot's "right now" aggregator (weather + AQI + NWS alerts +
+    # fire-weather composite + sun). Read-only, public. Caches upstream
+    # for 30 min so a busy chat day costs at most 48 fetches each.
+    app.register_blueprint(live_bp,           url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
