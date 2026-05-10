@@ -404,6 +404,23 @@ def create_app():
     registry.load()
     app.config['CMS_REGISTRY'] = registry
 
+    # ── Security hardening: HTTP response headers + cookie hardening ─────────
+    # Adds X-Frame-Options, X-Content-Type-Options, Referrer-Policy,
+    # Permissions-Policy, Content-Security-Policy, Strict-Transport-Security
+    # to every API response. Addresses OWASP A02 (Security Misconfiguration).
+    from app.utils.security import install_security_headers
+    install_security_headers(app)
+    # Eager-import the SecurityEvent model so db.create_all picks it up
+    from app.models import security_event  # noqa: F401
+
+    # ── Cookie security defaults — applied site-wide regardless of env ───────
+    app.config.setdefault('SESSION_COOKIE_SECURE',   not app.config.get('DEBUG', False))
+    app.config.setdefault('SESSION_COOKIE_HTTPONLY', True)
+    app.config.setdefault('SESSION_COOKIE_SAMESITE', 'Lax')
+    app.config.setdefault('REMEMBER_COOKIE_SECURE', not app.config.get('DEBUG', False))
+    app.config.setdefault('REMEMBER_COOKIE_HTTPONLY', True)
+    app.config.setdefault('REMEMBER_COOKIE_SAMESITE', 'Lax')
+
     # ── Create tables + seed on first run ─────────────────────────────────────
     with app.app_context():
         db.create_all()
@@ -444,6 +461,7 @@ def _register_blueprints(app):
     from app.routes.cms_ai import cms_ai_bp
     from app.routes.site_config import site_config_bp
     from app.routes.page_overrides import page_overrides_bp
+    from app.routes.security import security_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -466,6 +484,7 @@ def _register_blueprints(app):
     # Both feed hydrate.js's data-cms-config / data-cms-override swap.
     app.register_blueprint(site_config_bp,    url_prefix='/api')
     app.register_blueprint(page_overrides_bp, url_prefix='/api')
+    app.register_blueprint(security_bp,       url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
