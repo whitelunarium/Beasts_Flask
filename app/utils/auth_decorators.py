@@ -40,13 +40,31 @@ def requires_auth(f):
     return decorated
 
 
+def _admin_key_matches():
+    """v3.19: also accept X-PNEC-Admin-Key header for the 'admin' role
+    so the Live Theme Editor / admin dashboards can authenticate
+    cross-origin without a cookie session. The key must match
+    ADMIN_PASSWORD configured on the server."""
+    from flask import request, current_app
+    key = request.headers.get('X-PNEC-Admin-Key')
+    if not key:
+        return False
+    expected = current_app.config.get('ADMIN_PASSWORD')
+    if not expected:
+        return False
+    # Constant-time compare to avoid timing attacks
+    import hmac
+    return hmac.compare_digest(str(key), str(expected))
+
+
 def requires_role(*roles):
     """
     Purpose: Restrict a route to users whose role is in the allowed list.
     @param {*str} roles - One or more allowed role strings
     @returns {function} Decorator that enforces role membership
     Algorithm:
-    1. Check that user is authenticated
+    1. Check that user is authenticated (or X-PNEC-Admin-Key matches when
+       'admin' is allowed and no session)
     2. Check that user's role is in the allowed set
     3. If either check fails: return appropriate JSON error
     4. Otherwise: call the route handler
@@ -54,13 +72,19 @@ def requires_role(*roles):
     def decorator(f):
         @wraps(f)
         def decorated(*args, **kwargs):
-            if not current_user.is_authenticated:
-                return jsonify({'error': 'UNAUTHORIZED',
-                                'message': 'Please sign in to continue.'}), 401
-            if current_user.role not in roles:
-                return jsonify({'error': 'FORBIDDEN',
-                                'message': 'You do not have permission to do this.'}), 403
-            return f(*args, **kwargs)
+            # Path A: authenticated session (cookie-based admin login)
+            if current_user.is_authenticated:
+                if current_user.role not in roles:
+                    return jsonify({'error': 'FORBIDDEN',
+                                    'message': 'You do not have permission to do this.'}), 403
+                return f(*args, **kwargs)
+            # Path B: admin key header (lets the Live Theme Editor /
+            # admin dashboards bypass session-cookie auth when their
+            # admin role is sufficient).
+            if 'admin' in roles and _admin_key_matches():
+                return f(*args, **kwargs)
+            return jsonify({'error': 'UNAUTHORIZED',
+                            'message': 'Please sign in to continue.'}), 401
         return decorated
     return decorator
 

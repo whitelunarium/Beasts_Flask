@@ -35,8 +35,14 @@ def _unique_slug(title, exclude_id=None):
 @blog_bp.route('/blog', methods=['GET'])
 def list_posts():
     show_all = request.args.get('all') == '1'
-    if show_all and (not current_user.is_authenticated or current_user.role != 'admin'):
-        show_all = False
+    if show_all:
+        # session admin OR admin-key header
+        if current_user.is_authenticated and current_user.role == 'admin':
+            pass
+        else:
+            from app.utils.auth_decorators import _admin_key_matches
+            if not _admin_key_matches():
+                show_all = False
 
     q = BlogPost.query
     if not show_all:
@@ -72,6 +78,11 @@ def create_post():
     else:
         slug = _unique_slug(title)
 
+    # author_id is best-effort: works when an admin is logged in via
+    # session. Falls back to None when the request is authenticated via
+    # X-PNEC-Admin-Key (no real user behind it). Display side falls
+    # back to 'PNEC Admin' when author_id is null.
+    author_id = current_user.id if current_user.is_authenticated else None
     post = BlogPost(
         title           = title,
         slug            = slug,
@@ -79,7 +90,7 @@ def create_post():
         excerpt         = data.get('excerpt') or None,
         cover_image_url = data.get('cover_image_url') or None,
         published       = bool(data.get('published', False)),
-        author_id       = current_user.id,
+        author_id       = author_id,
     )
     db.session.add(post)
     db.session.commit()
