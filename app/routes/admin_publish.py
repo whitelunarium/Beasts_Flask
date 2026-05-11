@@ -370,25 +370,66 @@ def ai_section():
                 {'role': 'user',   'content': user_prompt},
             ],
         })
+        if resp.status_code == 401:
+            return error_response('GROQ_AUTH', 502, {
+                'detail': 'GROQ_API_KEY rejected by Groq — check the key is valid and not revoked.',
+            })
+        if resp.status_code == 429:
+            return error_response('GROQ_RATE_LIMITED', 502, {
+                'detail': 'Groq rate-limit hit. Wait a minute and try again.',
+            })
         if not resp.ok:
             return error_response('GROQ_API_ERROR', 502, {
                 'detail': f'Groq returned {resp.status_code}',
                 'body': resp.text[:400],
             })
-        body = resp.json()
-        html = ((body.get('choices') or [{}])[0].get('message') or {}).get('content') or ''
-        # Strip any accidental markdown fences
+
+        # Be paranoid about response shape — handle every layer that
+        # could be malformed: not-JSON, missing choices, missing
+        # message, non-string content.
+        try:
+            body = resp.json()
+        except Exception:
+            return error_response('GROQ_BAD_JSON', 502, {
+                'detail': 'Groq returned non-JSON output.',
+                'body': (resp.text or '')[:400],
+            })
+        if not isinstance(body, dict):
+            return error_response('GROQ_BAD_SHAPE', 502, {'detail': 'Response not a dict.'})
+        choices = body.get('choices')
+        if not isinstance(choices, list) or not choices:
+            return error_response('GROQ_NO_CHOICES', 502, {'detail': 'No choices in response.'})
+        msg = (choices[0] or {}).get('message') or {}
+        html = msg.get('content')
+        if not isinstance(html, str):
+            return error_response('GROQ_NO_CONTENT', 502, {
+                'detail': 'Empty / non-string message content.',
+            })
+
+        # Strip accidental markdown fences ```html … ```
         html = html.strip()
         if html.startswith('```'):
-            html = html.split('\n', 1)[-1] if '\n' in html else ''
-            if html.endswith('```'):
-                html = html[:-3].rstrip()
+            # Drop the opening fence (and any language tag) up to the
+            # first newline, then the trailing ``` if present.
+            nl = html.find('\n')
+            html = html[nl + 1:] if nl >= 0 else ''
+            if html.rstrip().endswith('```'):
+                html = html.rstrip()[:-3].rstrip()
+
+        # Length sanity
+        if len(html) > 50_000:
+            html = html[:50_000] + '\n<!-- truncated to 50KB -->'
+
         return jsonify({
-            'ok': True,
-            'html': html,
+            'ok':    True,
+            'html':  html,
             'model': body.get('model') or model,
             'usage': body.get('usage') or {},
         }), 200
+    except _requests.exceptions.Timeout:
+        return error_response('GROQ_TIMEOUT', 504, {'detail': 'Groq did not respond within 30s.'})
+    except _requests.exceptions.ConnectionError:
+        return error_response('GROQ_NETWORK', 502, {'detail': 'Could not reach Groq.'})
     except Exception as e:
         try:
             current_app.logger.exception('admin.ai_section failed')
