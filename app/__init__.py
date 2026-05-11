@@ -448,10 +448,10 @@ def _register_blueprints(app):
     from app.routes.risk import risk_bp
     from app.routes.events import events_bp
     from app.routes.media import media_bp
-    from app.routes.game import game_bp
+    # v3.16: game + escape_room blueprints removed — those features
+    # were retired (not user-facing on the production site).
     from app.routes.titanic import titanic_bp
     from app.routes.admin import admin_bp
-    from app.routes.escape_room import escape_room_bp
     from app.routes.gemini import gemini_bp
     from app.routes.news import news_bp
     from app.routes.blog import blog_bp
@@ -475,10 +475,8 @@ def _register_blueprints(app):
     app.register_blueprint(risk_bp,          url_prefix='/api')
     app.register_blueprint(events_bp,        url_prefix='/api')
     app.register_blueprint(media_bp,         url_prefix='/api')
-    app.register_blueprint(game_bp,          url_prefix='/api')
     app.register_blueprint(titanic_bp,       url_prefix='/api')
     app.register_blueprint(admin_bp,         url_prefix='/api/admin')
-    app.register_blueprint(escape_room_bp,   url_prefix='/api')
     app.register_blueprint(gemini_bp,        url_prefix='/api')
     app.register_blueprint(news_bp,          url_prefix='/api')
     app.register_blueprint(blog_bp,          url_prefix='/api')
