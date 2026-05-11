@@ -245,3 +245,81 @@ def workflow_runs(per_page: int = 5):
         return r.json().get('workflow_runs', []) or []
     except Exception:
         return []
+
+
+def file_history(path: str, per_page: int = 10):
+    """Recent commits for a single file. Returns list of dicts or []."""
+    try:
+        token, owner, repo, branch = _config()
+        url = f'{GITHUB_API}/repos/{owner}/{repo}/commits'
+        r = requests.get(url, headers=_hdrs(token), timeout=DEFAULT_TIMEOUT,
+                         params={'path': path, 'sha': branch, 'per_page': per_page})
+        if not r.ok:
+            return []
+        out = []
+        for c in r.json() or []:
+            cmt = c.get('commit') or {}
+            author = cmt.get('author') or {}
+            out.append({
+                'sha':         c.get('sha'),
+                'short_sha':   (c.get('sha') or '')[:7],
+                'message':     (cmt.get('message') or '').split('\n')[0][:200],
+                'author_name': author.get('name'),
+                'author_date': author.get('date'),
+                'html_url':    c.get('html_url'),
+            })
+        return out
+    except Exception:
+        return []
+
+
+def get_file_at(path: str, ref: str):
+    """Fetch a file's content + sha at a specific ref (commit sha or
+    branch name). Used by /diff and rollback. Returns (content, sha) or
+    (None, None) on 404."""
+    token, owner, repo, _branch = _config()
+    url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
+    r = requests.get(url, headers=_hdrs(token), params={'ref': ref},
+                     timeout=DEFAULT_TIMEOUT)
+    if r.status_code == 404:
+        return None, None
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET contents/{path}@{ref} failed', r.status_code, r.text[:300]
+        )
+    data = r.json()
+    if data.get('type') != 'file':
+        raise GitHubPublishError(f'{path}@{ref} is not a file')
+    import base64 as _b64
+    encoded = (data.get('content') or '').replace('\n', '')
+    try:
+        content = _b64.b64decode(encoded).decode('utf-8')
+    except Exception:
+        content = ''
+    return content, data.get('sha')
+
+
+def repo_info():
+    """Lightweight health check — confirm token + repo are reachable.
+
+    Returns a dict {ok, owner, repo, branch, name, default_branch,
+    private, ...} or raises GitHubPublishError."""
+    token, owner, repo, branch = _config()
+    url = f'{GITHUB_API}/repos/{owner}/{repo}'
+    r = requests.get(url, headers=_hdrs(token), timeout=DEFAULT_TIMEOUT)
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET repos/{owner}/{repo} failed', r.status_code, r.text[:300]
+        )
+    j = r.json()
+    return {
+        'ok':            True,
+        'owner':         owner,
+        'repo':          repo,
+        'branch':        branch,
+        'full_name':     j.get('full_name'),
+        'default_branch': j.get('default_branch'),
+        'private':       j.get('private'),
+        'pushed_at':     j.get('pushed_at'),
+        'html_url':      j.get('html_url'),
+    }

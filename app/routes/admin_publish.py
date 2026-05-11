@@ -1,11 +1,16 @@
 # app/routes/admin_publish.py
-# v3.15 — admin endpoints for the Live Theme Editor:
+# v3.15 / v3.17 — admin endpoints for the Live Theme Editor:
+#   - GET  /api/admin/publish/health      server health: token, repo, Groq
+#   - GET  /api/admin/publish/file        GET current content of a file from GitHub
 #   - POST /api/admin/publish/file        commit a single file change to GitHub
 #   - POST /api/admin/publish/files       commit a batch of file changes (atomic)
+#   - POST /api/admin/publish/diff        compute unified diff (proposed vs HEAD)
+#   - GET  /api/admin/publish/history     list recent commits for a path
+#   - POST /api/admin/publish/rollback    revert a file to a specific commit
 #   - GET  /api/admin/publish/status      latest workflow run status
-#   - GET  /api/admin/publish/file        GET current content of a file from GitHub
 #   - POST /api/admin/ai/section          generate page section HTML via Groq
 
+import difflib
 import os
 from flask import Blueprint, jsonify, request, current_app
 
@@ -28,6 +33,64 @@ def _require_admin():
     if key and key == current_app.config.get('ADMIN_PASSWORD'):
         return True
     return False
+
+
+# ─── Health check ─────────────────────────────────────────────────
+
+@admin_publish_bp.route('/admin/publish/health', methods=['GET'])
+def health():
+    """Returns the editor's connection state so admins can verify
+    everything is wired before they try to edit + publish."""
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+
+    out = {
+        'ok': True,
+        'auth':   {'ok': True, 'method': 'admin_key'},
+        'github': {'ok': False},
+        'groq':   {'ok': False},
+    }
+
+    # GitHub
+    token = current_app.config.get('GITHUB_TOKEN')
+    if not token:
+        out['github'] = {
+            'ok': False,
+            'error': 'GITHUB_TOKEN env var is not set on the server. '
+                     'Without this, publish + load both fail. Generate a '
+                     'fine-grained PAT with Contents:read+write on this repo '
+                     'and set GITHUB_TOKEN in the production environment.',
+        }
+    else:
+        try:
+            info = gh.repo_info()
+            out['github'] = {'ok': True, **info}
+        except gh.GitHubPublishError as e:
+            out['github'] = {
+                'ok': False,
+                'status': e.status,
+                'error': str(e),
+                'hint': ('Check the PAT scope (Contents:read+write) and '
+                         'that GITHUB_OWNER / GITHUB_REPO / GITHUB_BRANCH '
+                         'env vars match the actual repo.'),
+            }
+
+    # Groq
+    groq_key = current_app.config.get('GROQ_API_KEY') or os.environ.get('GROQ_API_KEY')
+    if groq_key:
+        out['groq'] = {
+            'ok': True,
+            'model': current_app.config.get('GROQ_MODEL') or 'llama-3.3-70b-versatile',
+        }
+    else:
+        out['groq'] = {
+            'ok': False,
+            'error': 'GROQ_API_KEY not set — AI section generation disabled.',
+        }
+
+    # Overall ok if all sub-systems ok
+    out['ok'] = out['github']['ok'] and out['groq']['ok']
+    return jsonify(out), 200
 
 
 # ─── GitHub publish ───────────────────────────────────────────────
@@ -123,6 +186,98 @@ def publish_many_files():
             )
         except Exception:
             pass
+        return jsonify({'ok': True, **result}), 200
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+
+@admin_publish_bp.route('/admin/publish/diff', methods=['POST'])
+def diff_file():
+    """Server-side unified diff between current file content on the
+    configured branch and the proposed new content. Returns:
+      { ok, path, current_sha, diff (unified), lines_added, lines_removed }
+    """
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+
+    data = request.get_json(silent=True) or {}
+    path = (data.get('path') or '').strip()
+    proposed = data.get('content')
+    if not path or '..' in path or path.startswith('/'):
+        return error_response('INVALID_PATH', 400)
+    if not isinstance(proposed, str):
+        return error_response('INVALID_CONTENT', 400)
+
+    try:
+        current, sha = gh.get_file(path)
+        if current is None:
+            current = ''     # new file
+            sha = None
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+    a = current.splitlines(keepends=True)
+    b = proposed.splitlines(keepends=True)
+    udiff = ''.join(difflib.unified_diff(
+        a, b, fromfile=f'{path} (HEAD)', tofile=f'{path} (proposed)',
+        lineterm='',
+    ))
+    added = sum(1 for line in udiff.split('\n')
+                if line.startswith('+') and not line.startswith('+++'))
+    removed = sum(1 for line in udiff.split('\n')
+                  if line.startswith('-') and not line.startswith('---'))
+    return jsonify({
+        'ok':            True,
+        'path':          path,
+        'current_sha':   sha,
+        'diff':          udiff,
+        'lines_added':   added,
+        'lines_removed': removed,
+        'identical':     (current == proposed),
+        'new_file':      (sha is None),
+    }), 200
+
+
+@admin_publish_bp.route('/admin/publish/history', methods=['GET'])
+def file_history():
+    """Recent commits touching the given file."""
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+    path = (request.args.get('path') or '').strip()
+    if not path:
+        return error_response('INVALID_PATH', 400)
+    try:
+        items = gh.file_history(path, per_page=int(request.args.get('per_page', 10)))
+        return jsonify({'ok': True, 'path': path, 'items': items}), 200
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+
+@admin_publish_bp.route('/admin/publish/rollback', methods=['POST'])
+def rollback_file():
+    """Restore a file to its state at a specific commit SHA. Creates a
+    new commit on the branch — does NOT rewrite history.
+
+    Body: { path, sha, message? }
+    """
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+    data = request.get_json(silent=True) or {}
+    path = (data.get('path') or '').strip()
+    sha  = (data.get('sha')  or '').strip()
+    message = (data.get('message') or '').strip() or f'Rollback {path} to {sha[:7]}'
+    if not path or not sha:
+        return error_response('INVALID_INPUT', 400)
+    try:
+        old_content, _old_sha = gh.get_file_at(path, sha)
+        if old_content is None:
+            return error_response('NOT_FOUND_AT_SHA', 404,
+                                  {'detail': f'{path} not present at commit {sha[:7]}'})
+        result = gh.commit_single_file(
+            path=path, new_content=old_content, message=message,
+            committer_name='PNEC Live Editor (rollback)',
+            committer_email='editor@powaynec.com',
+        )
         return jsonify({'ok': True, **result}), 200
     except gh.GitHubPublishError as e:
         return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
