@@ -1,0 +1,247 @@
+# app/services/github_publish_service.py
+# v3.15 — commit file changes to a GitHub repo via the REST API.
+#
+# Used by the Live Theme Editor's "Publish to GitHub" button: admins
+# edit pages in the browser, click Publish, and this service commits
+# the changes to the public repo. Pages then rebuilds in ~5 min.
+#
+# Architecture:
+#   - The editor stores draft content in the database (page_template etc.)
+#   - When "Publish to GitHub" is clicked, the controller:
+#       1. Collects the file path + new content for each file to update
+#       2. Calls publish_files() here, which uses the GitHub REST API
+#          to commit a single commit covering all changed files
+#       3. Returns the commit SHA + the build-status URL
+#
+# Why direct API commits (not git clone+push):
+#   - The Flask host doesn't need git installed or write access to a
+#     working tree.
+#   - One PAT token. One commit. Atomic.
+#   - The PAT scope is narrow ("Contents: read+write" on the two
+#     PNEC repos), much safer than a deploy SSH key.
+#
+# Auth header:
+#   "Authorization: Bearer <GITHUB_TOKEN>"
+#   (Fine-grained PATs work with Bearer; classic PATs work with both
+#    "token <pat>" and "Bearer <pat>".)
+
+import base64
+import time
+from typing import Iterable
+
+import requests
+from flask import current_app
+
+
+GITHUB_API = 'https://api.github.com'
+DEFAULT_TIMEOUT = 30
+
+
+class GitHubPublishError(Exception):
+    """Raised when GitHub returns a non-success status or the request
+    couldn't be made (network, missing token, etc.)."""
+
+    def __init__(self, message, status=None, body=None):
+        super().__init__(message)
+        self.status = status
+        self.body = body
+
+
+def _config():
+    """Return (token, owner, repo, branch) from app config; raise if
+    token is missing — we never want to silently fail-open here."""
+    cfg = current_app.config
+    token = cfg.get('GITHUB_TOKEN')
+    if not token:
+        raise GitHubPublishError('GITHUB_TOKEN not configured on the server.')
+    return (
+        token,
+        cfg.get('GITHUB_OWNER') or 'whitelunarium',
+        cfg.get('GITHUB_REPO')  or 'Beasts_FrontEnd',
+        cfg.get('GITHUB_BRANCH') or 'main',
+    )
+
+
+def _hdrs(token):
+    return {
+        'Authorization': f'Bearer {token}',
+        'Accept': 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'PNEC-Live-Editor/3.15',
+    }
+
+
+def get_file(path: str):
+    """Fetch the current content + sha for `path` on the configured
+    branch. Returns (content_str, sha) or (None, None) if 404."""
+    token, owner, repo, branch = _config()
+    url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
+    r = requests.get(url, headers=_hdrs(token),
+                     params={'ref': branch}, timeout=DEFAULT_TIMEOUT)
+    if r.status_code == 404:
+        return None, None
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET contents/{path} failed', r.status_code, r.text[:300]
+        )
+    data = r.json()
+    if data.get('type') != 'file':
+        raise GitHubPublishError(f'{path} is not a file (type={data.get("type")})')
+    encoded = (data.get('content') or '').replace('\n', '')
+    try:
+        content = base64.b64decode(encoded).decode('utf-8')
+    except Exception:
+        content = ''
+    return content, data.get('sha')
+
+
+def commit_single_file(path: str, new_content: str, message: str,
+                        committer_name: str = None, committer_email: str = None):
+    """Commit a SINGLE file change. Simpler than multi-file commits
+    (uses the Contents API), works well for single-page edits.
+
+    Returns dict { commit_sha, html_url, content_sha, branch }."""
+    token, owner, repo, branch = _config()
+    _, existing_sha = get_file(path)
+
+    encoded = base64.b64encode(new_content.encode('utf-8')).decode('ascii')
+    body = {
+        'message': message,
+        'content': encoded,
+        'branch': branch,
+    }
+    if existing_sha:
+        body['sha'] = existing_sha
+    if committer_name and committer_email:
+        body['committer'] = {'name': committer_name, 'email': committer_email}
+
+    url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
+    r = requests.put(url, headers=_hdrs(token), json=body, timeout=DEFAULT_TIMEOUT)
+    if not r.ok:
+        raise GitHubPublishError(
+            f'PUT contents/{path} failed', r.status_code, r.text[:500]
+        )
+    data = r.json()
+    return {
+        'commit_sha':  (data.get('commit') or {}).get('sha'),
+        'html_url':    (data.get('commit') or {}).get('html_url'),
+        'content_sha': (data.get('content') or {}).get('sha'),
+        'branch':      branch,
+    }
+
+
+def commit_multiple_files(files: Iterable[dict], message: str,
+                          committer_name: str = None,
+                          committer_email: str = None):
+    """Commit multiple files in ONE atomic commit.
+
+    Each item in `files` is a dict: {path, content}.
+    Uses the lower-level Git Data API (Tree / Blob / Commit / Ref).
+
+    Returns dict { commit_sha, tree_sha, html_url, branch, count }."""
+    token, owner, repo, branch = _config()
+    files = list(files)
+    if not files:
+        raise GitHubPublishError('No files to commit.')
+
+    repo_base = f'{GITHUB_API}/repos/{owner}/{repo}'
+    h = _hdrs(token)
+
+    # 1. Resolve the branch HEAD (the SHA of the latest commit on `branch`)
+    r = requests.get(f'{repo_base}/git/refs/heads/{branch}', headers=h, timeout=DEFAULT_TIMEOUT)
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET refs/heads/{branch} failed', r.status_code, r.text[:300]
+        )
+    head_sha = r.json()['object']['sha']
+
+    # 2. Get the tree SHA for the head commit
+    r = requests.get(f'{repo_base}/git/commits/{head_sha}', headers=h, timeout=DEFAULT_TIMEOUT)
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET commits/{head_sha} failed', r.status_code, r.text[:300]
+        )
+    base_tree = r.json()['tree']['sha']
+
+    # 3. Create a blob per file
+    tree_entries = []
+    for f in files:
+        path = f.get('path')
+        content = f.get('content', '')
+        if not path:
+            raise GitHubPublishError('file dict missing path')
+        # Encode as base64 so we can carry arbitrary content (incl. UTF-8)
+        encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
+        r = requests.post(f'{repo_base}/git/blobs', headers=h, timeout=DEFAULT_TIMEOUT,
+                          json={'content': encoded, 'encoding': 'base64'})
+        if not r.ok:
+            raise GitHubPublishError(
+                f'POST blobs (path={path}) failed', r.status_code, r.text[:300]
+            )
+        tree_entries.append({
+            'path': path,
+            'mode': '100644',
+            'type': 'blob',
+            'sha':  r.json()['sha'],
+        })
+
+    # 4. Create a tree based on the existing tree + our new blobs
+    r = requests.post(f'{repo_base}/git/trees', headers=h, timeout=DEFAULT_TIMEOUT,
+                      json={'base_tree': base_tree, 'tree': tree_entries})
+    if not r.ok:
+        raise GitHubPublishError(
+            'POST trees failed', r.status_code, r.text[:300]
+        )
+    tree_sha = r.json()['sha']
+
+    # 5. Create the commit object
+    commit_body = {
+        'message': message,
+        'tree': tree_sha,
+        'parents': [head_sha],
+    }
+    if committer_name and committer_email:
+        commit_body['author'] = {'name': committer_name, 'email': committer_email,
+                                 'date': time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())}
+        commit_body['committer'] = commit_body['author']
+
+    r = requests.post(f'{repo_base}/git/commits', headers=h, timeout=DEFAULT_TIMEOUT,
+                      json=commit_body)
+    if not r.ok:
+        raise GitHubPublishError(
+            'POST commits failed', r.status_code, r.text[:300]
+        )
+    commit_sha = r.json()['sha']
+    commit_html = r.json().get('html_url')
+
+    # 6. Update the branch ref to point at our new commit
+    r = requests.patch(f'{repo_base}/git/refs/heads/{branch}', headers=h, timeout=DEFAULT_TIMEOUT,
+                       json={'sha': commit_sha, 'force': False})
+    if not r.ok:
+        raise GitHubPublishError(
+            f'PATCH refs/heads/{branch} failed', r.status_code, r.text[:500]
+        )
+
+    return {
+        'commit_sha':  commit_sha,
+        'tree_sha':    tree_sha,
+        'html_url':    commit_html,
+        'branch':      branch,
+        'count':       len(files),
+    }
+
+
+def workflow_runs(per_page: int = 5):
+    """Return the most-recent Pages-deploy workflow runs so the UI can
+    surface 'Pages is rebuilding'. Returns [] if anything fails — this
+    is a nice-to-have, not a must."""
+    try:
+        token, owner, repo, _branch = _config()
+        url = f'{GITHUB_API}/repos/{owner}/{repo}/actions/runs'
+        r = requests.get(url, headers=_hdrs(token), timeout=DEFAULT_TIMEOUT,
+                         params={'per_page': per_page})
+        if not r.ok:
+            return []
+        return r.json().get('workflow_runs', []) or []
+    except Exception:
+        return []

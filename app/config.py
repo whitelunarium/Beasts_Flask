@@ -95,6 +95,19 @@ class Config:
         os.path.dirname(__file__), 'cms_sections'
     )
 
+    # ─── GitHub publish (v3.15) ──────────────────────────────────────────────
+    # When the Live Theme Editor's "Publish to GitHub" button is clicked,
+    # the backend commits the changed source files to the public repo via
+    # the GitHub REST API. Pages then rebuilds the deploy in ~5 min.
+    #
+    # GITHUB_TOKEN: a fine-grained PAT with "Contents: read+write" on the
+    #               two PNEC repos. NEVER commit this to source — only set
+    #               via env var on the production host.
+    GITHUB_TOKEN  = os.environ.get('GITHUB_TOKEN') or None
+    GITHUB_OWNER  = os.environ.get('GITHUB_OWNER')  or 'whitelunarium'
+    GITHUB_REPO   = os.environ.get('GITHUB_REPO')   or 'Beasts_FrontEnd'
+    GITHUB_BRANCH = os.environ.get('GITHUB_BRANCH') or 'main'
+
 
 class DevelopmentConfig(Config):
     DEBUG = True

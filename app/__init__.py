@@ -466,6 +466,7 @@ def _register_blueprints(app):
     from app.routes.security import security_bp
     from app.routes.live import live_bp
     from app.routes.volunteer import volunteer_bp
+    from app.routes.admin_publish import admin_publish_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -495,6 +496,8 @@ def _register_blueprints(app):
     app.register_blueprint(live_bp,           url_prefix='/api')
     # v3.14 — volunteer interest submissions + admin management
     app.register_blueprint(volunteer_bp,      url_prefix='/api')
+    # v3.15 — Live Theme Editor's publish-to-GitHub + Groq AI endpoints
+    app.register_blueprint(admin_publish_bp,  url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
