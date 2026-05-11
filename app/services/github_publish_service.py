@@ -96,13 +96,30 @@ def get_file(path: str):
 
 
 def commit_single_file(path: str, new_content: str, message: str,
-                        committer_name: str = None, committer_email: str = None):
+                        committer_name: str = None, committer_email: str = None,
+                        expected_sha: str = None):
     """Commit a SINGLE file change. Simpler than multi-file commits
     (uses the Contents API), works well for single-page edits.
+
+    If `expected_sha` is provided, raises GitHubPublishError if the
+    file's current SHA on the branch doesn't match — protects against
+    two admins overwriting each other's work in the editor. The error
+    has a special status of 409 (conflict).
 
     Returns dict { commit_sha, html_url, content_sha, branch }."""
     token, owner, repo, branch = _config()
     _, existing_sha = get_file(path)
+
+    # Concurrent-edit conflict check
+    if expected_sha and existing_sha and existing_sha != expected_sha:
+        raise GitHubPublishError(
+            f'File changed on the branch since you loaded it. '
+            f'Someone else may have committed an edit to {path}. '
+            f'Reload the file to see their changes, then merge your '
+            f'edits.',
+            status=409,
+            body=f'expected={expected_sha[:8]} actual={existing_sha[:8]}',
+        )
 
     encoded = base64.b64encode(new_content.encode('utf-8')).decode('ascii')
     body = {
@@ -118,6 +135,15 @@ def commit_single_file(path: str, new_content: str, message: str,
     url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{path}'
     r = requests.put(url, headers=_hdrs(token), json=body, timeout=DEFAULT_TIMEOUT)
     if not r.ok:
+        # GitHub itself returns 409 if the SHA in the body doesn't
+        # match the current branch HEAD — happens in a tight race
+        # between our get_file() and our PUT.
+        if r.status_code == 409:
+            raise GitHubPublishError(
+                f'File changed on the branch during publish. '
+                f'Reload the file and try again.',
+                status=409, body=r.text[:300],
+            )
         raise GitHubPublishError(
             f'PUT contents/{path} failed', r.status_code, r.text[:500]
         )

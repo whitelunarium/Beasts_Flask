@@ -120,6 +120,7 @@ def publish_one_file():
     path = (data.get('path') or '').strip()
     content = data.get('content')
     message = (data.get('message') or '').strip() or 'Edit via PNEC Live Theme Editor'
+    expected_sha = (data.get('expected_sha') or '').strip() or None
 
     if not path or '..' in path or path.startswith('/'):
         return error_response('INVALID_PATH', 400)
@@ -134,6 +135,7 @@ def publish_one_file():
             message=message,
             committer_name='PNEC Live Editor',
             committer_email='editor@powaynec.com',
+            expected_sha=expected_sha,
         )
         try:
             current_app.logger.info(
@@ -143,6 +145,11 @@ def publish_one_file():
             pass
         return jsonify({'ok': True, **result}), 200
     except gh.GitHubPublishError as e:
+        # 409 is "someone else committed; reload and merge" — surface
+        # the specific code so the editor can show a useful error
+        # rather than a generic 502.
+        if e.status == 409:
+            return error_response('CONFLICT', 409, {'detail': str(e), 'body': e.body})
         return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
 
 
