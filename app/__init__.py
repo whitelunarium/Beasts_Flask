@@ -69,6 +69,15 @@ def create_app():
             'https://beasts.opencodingsociety.com',
         ],
         methods=['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        # v3.20: explicitly allow X-PNEC-Admin-Key so the admin-editor,
+        # admin-blog, and admin-nav UIs can authenticate cross-origin
+        # without a session cookie. Without this in allow_headers, the
+        # browser blocks the preflight and the admin tools show
+        # "Could not reach the Flask API" even though the server is up.
+        allow_headers=[
+            'Authorization', 'Origin', 'X-Origin', 'X-Requested-With',
+            'Content-Type', 'Accept', 'X-PNEC-Admin-Key',
+        ],
     )
 
     @app.get('/')
