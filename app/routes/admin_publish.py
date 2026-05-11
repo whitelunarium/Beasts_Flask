@@ -318,6 +318,30 @@ def file_history():
         return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
 
 
+@admin_publish_bp.route('/admin/publish/file-at', methods=['GET'])
+def file_at():
+    """Fetch a file's content at a specific commit SHA. Powers
+    the editor's 'preview before rollback' feature — admin clicks
+    a commit in the history list, sees what the file looked like
+    then, decides whether to restore."""
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+    path = (request.args.get('path') or '').strip()
+    ref  = (request.args.get('ref')  or '').strip()
+    if not path or '..' in path or path.startswith('/'):
+        return error_response('INVALID_PATH', 400)
+    if not ref:
+        return error_response('INVALID_REF', 400)
+    try:
+        content, sha = gh.get_file_at(path, ref)
+        if content is None:
+            return error_response('NOT_FOUND_AT_REF', 404,
+                                  {'detail': f'{path} not present at {ref[:7]}'})
+        return jsonify({'ok': True, 'path': path, 'ref': ref, 'sha': sha, 'content': content}), 200
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+
 @admin_publish_bp.route('/admin/publish/rollback', methods=['POST'])
 def rollback_file():
     """Restore a file to its state at a specific commit SHA. Creates a
