@@ -161,7 +161,11 @@ def commit_multiple_files(files: Iterable[dict], message: str,
                           committer_email: str = None):
     """Commit multiple files in ONE atomic commit.
 
-    Each item in `files` is a dict: {path, content}.
+    Each item in `files` is a dict: { path, content[, binary] }.
+    - If `binary` is True, `content` must be raw bytes (or a
+      latin-1-decoded string of those bytes).
+    - Otherwise `content` is a UTF-8 string.
+
     Uses the lower-level Git Data API (Tree / Blob / Commit / Ref).
 
     Returns dict { commit_sha, tree_sha, html_url, branch, count }."""
@@ -194,10 +198,21 @@ def commit_multiple_files(files: Iterable[dict], message: str,
     for f in files:
         path = f.get('path')
         content = f.get('content', '')
+        is_binary = bool(f.get('binary'))
         if not path:
             raise GitHubPublishError('file dict missing path')
-        # Encode as base64 so we can carry arbitrary content (incl. UTF-8)
-        encoded = base64.b64encode(content.encode('utf-8')).decode('ascii')
+        # Encode as base64 so we can carry arbitrary content. For binary
+        # files the caller passes bytes (or latin-1-decoded bytes) — we
+        # round-trip those without UTF-8 corruption.
+        if is_binary:
+            if isinstance(content, str):
+                # Treat as latin-1 bytes so we don't UTF-8 corrupt
+                raw = content.encode('latin-1')
+            else:
+                raw = bytes(content)
+        else:
+            raw = content.encode('utf-8')
+        encoded = base64.b64encode(raw).decode('ascii')
         r = requests.post(f'{repo_base}/git/blobs', headers=h, timeout=DEFAULT_TIMEOUT,
                           json={'content': encoded, 'encoding': 'base64'})
         if not r.ok:

@@ -111,6 +111,64 @@ def get_file():
         return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
 
 
+@admin_publish_bp.route('/admin/publish/upload', methods=['POST'])
+def upload_binary():
+    """Commit a binary file (image / PDF / etc) to the repo.
+
+    Body (JSON): {
+      path:    'images/uploads/<filename>'   (must NOT contain ..)
+      content_b64: base64-encoded file bytes
+      message: optional commit message
+    }
+
+    Size cap: 5 MB. Path must live under images/ (the editor's
+    page list doesn't surface other binary targets).
+    """
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+
+    data = request.get_json(silent=True) or {}
+    path = (data.get('path') or '').strip()
+    content_b64 = data.get('content_b64')
+    message = (data.get('message') or '').strip() or f'Upload {path} via Live Theme Editor'
+
+    if not path or '..' in path or path.startswith('/'):
+        return error_response('INVALID_PATH', 400)
+    if not path.startswith('images/') and not path.startswith('assets/images/'):
+        return error_response('PATH_NOT_ALLOWED', 400, {
+            'detail': 'Uploads must go to images/ or assets/images/'
+        })
+    if not isinstance(content_b64, str):
+        return error_response('INVALID_CONTENT', 400)
+
+    import base64 as _b64
+    try:
+        raw = _b64.b64decode(content_b64, validate=True)
+    except Exception:
+        return error_response('INVALID_BASE64', 400)
+    if len(raw) > 5_000_000:
+        return error_response('TOO_LARGE', 400, {'detail': 'Max 5 MB per upload.'})
+
+    # Commit binary via Git Data API (handles arbitrary bytes via
+    # base64) rather than Contents API (UTF-8 only).
+    try:
+        result = gh.commit_multiple_files(
+            files=[{'path': path, 'content': raw, 'binary': True}],
+            message=message,
+            committer_name='PNEC Live Editor',
+            committer_email='editor@powaynec.com',
+        )
+        try:
+            current_app.logger.info(
+                f'admin.upload ok path={path} bytes={len(raw)} sha={result.get("commit_sha")}'
+            )
+        except Exception:
+            pass
+        return jsonify({'ok': True, **result}), 200
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+
 @admin_publish_bp.route('/admin/publish/file', methods=['POST'])
 def publish_one_file():
     if not _require_admin():
