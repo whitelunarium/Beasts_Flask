@@ -340,6 +340,45 @@ def get_file_at(path: str, ref: str):
     return content, data.get('sha')
 
 
+def list_directory(path: str = 'pages'):
+    """List files in `path` (default: 'pages') at the configured branch.
+
+    Returns a list of {path, name, sha, size, type} dicts — type is
+    'file' or 'dir'. Used by /api/admin/publish/pages so the Site Nav
+    Manager can offer newly-created admin pages as nav suggestions
+    without having to ship a hardcoded catalog on the frontend.
+
+    Empty list for 404 (missing directory) — same shape as get_file.
+    """
+    token, owner, repo, branch = _config()
+    safe_path = path.strip('/').replace('..', '')
+    url = f'{GITHUB_API}/repos/{owner}/{repo}/contents/{safe_path}'
+    r = requests.get(url, headers=_hdrs(token),
+                     params={'ref': branch}, timeout=DEFAULT_TIMEOUT)
+    if r.status_code == 404:
+        return []
+    if not r.ok:
+        raise GitHubPublishError(
+            f'GET contents/{safe_path} failed', r.status_code, r.text[:300]
+        )
+    data = r.json()
+    if not isinstance(data, list):
+        # GitHub returns a single dict for files; only directories
+        # come back as arrays. Anything else here is a config error.
+        return []
+    return [
+        {
+            'path': entry.get('path'),
+            'name': entry.get('name'),
+            'sha':  entry.get('sha'),
+            'size': entry.get('size'),
+            'type': entry.get('type'),
+        }
+        for entry in data
+        if entry.get('name') and not entry['name'].startswith('.')
+    ]
+
+
 def repo_info():
     """Lightweight health check — confirm token + repo are reachable.
 

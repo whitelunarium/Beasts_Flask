@@ -111,6 +111,29 @@ def get_file():
         return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
 
 
+@admin_publish_bp.route('/admin/publish/pages', methods=['GET'])
+def list_pages():
+    """List files under a repo directory (default: 'pages').
+
+    Used by the Site Nav Manager (/pages/admin-nav.html) to surface
+    admin-created pages that aren't in the nav yet, so admins can
+    promote them to the main menu with one click. Caller can pass
+    ?dir=pages or any sub-path; we still block traversal.
+    """
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+    dir_arg = (request.args.get('dir') or 'pages').strip()
+    if '..' in dir_arg or dir_arg.startswith('/'):
+        return error_response('INVALID_PATH', 400)
+    try:
+        entries = gh.list_directory(dir_arg)
+        # Return the same shape the frontend expects; preserve 'path'
+        # so the client can build site-rooted URLs unambiguously.
+        return jsonify({'ok': True, 'dir': dir_arg, 'pages': entries}), 200
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502, {'detail': str(e), 'status': e.status})
+
+
 @admin_publish_bp.route('/admin/publish/upload', methods=['POST'])
 def upload_binary():
     """Commit a binary file (image / PDF / etc) to the repo.
