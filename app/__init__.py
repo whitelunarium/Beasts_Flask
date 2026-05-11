@@ -412,6 +412,8 @@ def create_app():
     install_security_headers(app)
     # Eager-import the SecurityEvent model so db.create_all picks it up
     from app.models import security_event  # noqa: F401
+    # v3.14 — same for volunteer interest submissions
+    from app.models import volunteer_interest  # noqa: F401
 
     # ── Cookie security defaults — applied site-wide regardless of env ───────
     app.config.setdefault('SESSION_COOKIE_SECURE',   not app.config.get('DEBUG', False))
@@ -463,6 +465,7 @@ def _register_blueprints(app):
     from app.routes.page_overrides import page_overrides_bp
     from app.routes.security import security_bp
     from app.routes.live import live_bp
+    from app.routes.volunteer import volunteer_bp
 
     app.register_blueprint(auth_bp,          url_prefix='/api/auth')
     app.register_blueprint(legacy_user_bp,   url_prefix='/api')
@@ -490,6 +493,8 @@ def _register_blueprints(app):
     # fire-weather composite + sun). Read-only, public. Caches upstream
     # for 30 min so a busy chat day costs at most 48 fetches each.
     app.register_blueprint(live_bp,           url_prefix='/api')
+    # v3.14 — volunteer interest submissions + admin management
+    app.register_blueprint(volunteer_bp,      url_prefix='/api')
 
 
 def _seed_admin_if_missing(app):
