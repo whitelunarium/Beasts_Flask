@@ -747,9 +747,15 @@ def ai_prompt_engineer():
         return error_response('UNAUTHORIZED', 401)
 
     data = request.get_json(silent=True) or {}
-    page_path   = (data.get('path') or '').strip()
-    description = (data.get('description') or '').strip()
-    target_ai   = (data.get('target_ai') or 'claude').strip().lower()
+    # Coerce-to-string with a default — if the frontend sends a non-string
+    # (e.g. accidentally a dict from a click-event bug), we treat it as
+    # missing and return INVALID_PATH / INVALID_DESCRIPTION rather than
+    # crashing with a 500 on .strip().
+    def _as_str(v, default=''):
+        return v.strip() if isinstance(v, str) else default
+    page_path   = _as_str(data.get('path'))
+    description = _as_str(data.get('description'))
+    target_ai   = _as_str(data.get('target_ai'), 'claude').lower()
 
     # ── Validation ───────────────────────────────────────────────
     if not page_path or '..' in page_path or page_path.startswith('/'):
