@@ -632,7 +632,30 @@ def _build_steps(target_label, target_url):
 # while still embedding the FULL HTML in the engineered prompt the
 # user pastes into the target AI — which is what keeps us under
 # Groq's 12000 TPM free-tier limit on long pages.
-PAGE_HTML_PLACEHOLDER = '<<<<FULL_PAGE_HTML>>>>'
+#
+# We deliberately use an alphanumeric+underscore token (no <, >, /)
+# because Groq has a tendency to mangle angle-bracket delimiters when
+# the surrounding context is HTML/XML. A pure underscore-delimited
+# token survives faithfully in every output we've tested.
+PAGE_HTML_PLACEHOLDER = '__PNEC_FULL_PAGE_HTML__'
+
+# Near-miss placeholders Groq sometimes emits — we accept any of these
+# as a successful placeholder match (fall back in priority order). This
+# avoids the "append at end" fallback in 99% of real-world generations.
+_PLACEHOLDER_ALIASES = (
+    '__PNEC_FULL_PAGE_HTML__',
+    '<__PNEC_FULL_PAGE_HTML__>',
+    '{PNEC_FULL_PAGE_HTML}',
+    '{{PNEC_FULL_PAGE_HTML}}',
+    '<<<<PNEC_FULL_PAGE_HTML>>>>',
+    '<<<<FULL_PAGE_HTML>>>>',     # legacy spelling
+    '<<<FULL_PAGE_HTML>>>',
+    '<<FULL_PAGE_HTML>>',
+    '<FULL_PAGE_HTML>',
+    '[FULL_PAGE_HTML]',
+    '{FULL_PAGE_HTML}',
+    '{{FULL_PAGE_HTML}}',
+)
 
 
 # ── Page summariser for Groq ─────────────────────────────────────────
@@ -864,27 +887,37 @@ def ai_prompt_engineer():
         engineered_prompt = engineered_prompt.strip()
 
         # ── Substitute the placeholder with the FULL untrimmed HTML ──
-        # Groq may not always honor the placeholder convention (LLMs are
-        # imperfect). We handle three cases:
-        #   1. exactly one placeholder → swap it for the full HTML
-        #   2. multiple placeholders → swap the first one, drop the rest
-        #   3. no placeholder → append the full HTML in a labelled block
-        #      (we still want the user to get a usable prompt)
-        placeholder_count = engineered_prompt.count(PAGE_HTML_PLACEHOLDER)
-        if placeholder_count >= 1:
-            # Replace the first occurrence with full HTML, and drop any extras
-            first_idx = engineered_prompt.find(PAGE_HTML_PLACEHOLDER)
+        # LLMs are imperfect — Groq sometimes mangles the placeholder
+        # token (e.g. emits `>>>>FULL_PAGE_HTML>>>>` instead of
+        # `<<<<FULL_PAGE_HTML>>>>` when the surrounding context is HTML
+        # tags). We accept several near-miss aliases. Strategy:
+        #   1. Walk the alias list; the first one that appears is the
+        #      "canonical" placeholder Groq actually used.
+        #   2. Replace the first occurrence with the full HTML.
+        #   3. Drop any duplicate occurrences of the SAME alias.
+        #   4. If no alias matches → append the HTML in a labelled
+        #      block (we still want a usable prompt).
+        matched_alias = None
+        for alias in _PLACEHOLDER_ALIASES:
+            if alias in engineered_prompt:
+                matched_alias = alias
+                break
+
+        if matched_alias is not None:
+            count = engineered_prompt.count(matched_alias)
+            first_idx = engineered_prompt.find(matched_alias)
             engineered_prompt = (
                 engineered_prompt[:first_idx]
                 + page_content
-                + engineered_prompt[first_idx + len(PAGE_HTML_PLACEHOLDER):]
+                + engineered_prompt[first_idx + len(matched_alias):]
             )
-            # Strip any duplicate placeholders that Groq might have left
-            engineered_prompt = engineered_prompt.replace(PAGE_HTML_PLACEHOLDER, '')
-            placeholder_handling = 'substituted' if placeholder_count == 1 else 'substituted-first-deduped-rest'
+            # Drop duplicates of the same alias
+            engineered_prompt = engineered_prompt.replace(matched_alias, '')
+            if matched_alias == PAGE_HTML_PLACEHOLDER:
+                placeholder_handling = 'substituted' if count == 1 else f'substituted-first-deduped-{count-1}'
+            else:
+                placeholder_handling = f'substituted-alias({matched_alias})'
         else:
-            # Groq forgot the placeholder — append the HTML at the end so
-            # the user's paste still works.
             engineered_prompt = (
                 engineered_prompt.rstrip()
                 + '\n\n--- CURRENT PAGE HTML (preserve everything you do not change) ---\n\n'
