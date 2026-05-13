@@ -548,3 +548,253 @@ def ai_section():
         except Exception:
             pass
         return error_response('AI_ERROR', 502, {'detail': str(e)[:200]})
+
+
+# ────────────────────────────────────────────────────────────────────
+# AI Prompt Engineer (v3.29, 2026-05-13)
+# ────────────────────────────────────────────────────────────────────
+# The previous /admin/ai/section endpoint asked Groq to generate page
+# HTML directly. That capped creativity at Groq's ceiling. The new
+# pattern uses Groq as a META-prompt-engineer: it reads the actual
+# page content + the user's plain-English change request, and emits
+# a tailored prompt the user pastes into a MORE capable AI (Claude,
+# Gemini, or ChatGPT). The user runs that AI, copies its modified
+# HTML back into the editor, previews, saves.
+#
+# Why this is better:
+#   - PNEC admins get to use the strongest available model for each
+#     edit (Claude is dramatically better than Llama-3.3 at producing
+#     correct, semantically-clean HTML inside a complex existing page)
+#   - The engineered prompt embeds the entire current HTML inline, so
+#     the user only copies-pastes ONCE per edit
+#   - Each AI has different prompt-style preferences. Groq tailors the
+#     output to the chosen target.
+
+# Tailored format hints per target AI. These are appended to Groq's
+# system prompt so the generated prompt fits the target AI's strengths.
+_TARGET_AI_PROFILES = {
+    'claude': {
+        'label':       'Claude (Anthropic)',
+        'url':         'https://claude.ai',
+        'format_hints': (
+            'Use XML tags to structure the prompt: <current_html>, '
+            '<change_request>, <constraints>, <output_format>. '
+            'Use Claude\'s preferred explicit style — state constraints '
+            'as a bulleted list, ask Claude to think step-by-step inside '
+            '<thinking> tags before producing output, and demand that the '
+            'final response contains ONLY the modified HTML inside an '
+            '<output> tag (or as a raw HTML document if simpler).'
+        ),
+    },
+    'gemini': {
+        'label':       'Gemini (Google)',
+        'url':         'https://gemini.google.com',
+        'format_hints': (
+            'Be concise and direct. Lead with the role + task in one sentence. '
+            'Use markdown headings sparingly (one for the task, one for the '
+            'HTML, one for the constraints). Wrap the existing HTML in a '
+            '```html fenced block. Specify the output format as: a single '
+            '```html fenced block containing the complete modified document, '
+            'nothing else.'
+        ),
+    },
+    'chatgpt': {
+        'label':       'ChatGPT (OpenAI)',
+        'url':         'https://chatgpt.com',
+        'format_hints': (
+            'Open with a clear ROLE statement ("You are a senior web '
+            'developer..."). Structure the body as numbered TASK steps. End '
+            'with an OUTPUT FORMAT block that explicitly says: return ONLY '
+            'the complete modified HTML document, no commentary, no markdown '
+            'fences. Place the existing HTML inside a ```html code fence for '
+            'clarity.'
+        ),
+    },
+}
+
+
+def _build_steps(target_label, target_url):
+    """Step-by-step instructions shown beside the engineered prompt."""
+    return [
+        f'Open {target_label} in a new tab: {target_url}',
+        'Copy the engineered prompt below (the "Copy" button does the right thing).',
+        f'Paste the prompt into {target_label}. The prompt already contains the current page HTML.',
+        f'Wait for {target_label} to return the modified HTML.',
+        'Copy the entire response from the AI (just the HTML, no extra commentary).',
+        'Paste it back into the editor here, REPLACING the existing content.',
+        'Click "Preview" to verify, then "Save" to publish.',
+    ]
+
+
+@admin_publish_bp.route('/admin/ai/prompt-engineer', methods=['POST'])
+def ai_prompt_engineer():
+    """Meta-prompt-engineer: use Groq to generate a prompt the user can
+    paste into Claude / Gemini / ChatGPT to make a specific change to a
+    specific page on this site.
+
+    Body:
+      path:        repo-relative path to the page (required)
+      description: plain-English description of the desired change (required)
+      target_ai:   'claude' | 'gemini' | 'chatgpt'  (default: 'claude')
+
+    Returns:
+      {
+        ok: true,
+        prompt:          <engineered prompt to paste into target AI>,
+        target_ai:       <key>,
+        target_ai_label: <human-readable label>,
+        target_ai_url:   <where to open the AI>,
+        page_path:       <echoed back>,
+        page_bytes:      <size of the embedded HTML>,
+        steps:           [<copy-paste instructions>],
+        model:           <Groq model used>,
+        usage:           <Groq token accounting>,
+      }
+    """
+    if not _require_admin():
+        return error_response('UNAUTHORIZED', 401)
+
+    data = request.get_json(silent=True) or {}
+    page_path   = (data.get('path') or '').strip()
+    description = (data.get('description') or '').strip()
+    target_ai   = (data.get('target_ai') or 'claude').strip().lower()
+
+    # ── Validation ───────────────────────────────────────────────
+    if not page_path or '..' in page_path or page_path.startswith('/'):
+        return error_response('INVALID_PATH', 400,
+                              {'detail': 'path must be a repo-relative file path.'})
+    if not description:
+        return error_response('INVALID_DESCRIPTION', 400,
+                              {'detail': 'description is required.'})
+    if len(description) > 4000:
+        return error_response('INVALID_DESCRIPTION', 400,
+                              {'detail': 'description must be ≤ 4000 chars.'})
+    profile = _TARGET_AI_PROFILES.get(target_ai)
+    if profile is None:
+        return error_response('INVALID_TARGET_AI', 400,
+                              {'detail': 'target_ai must be claude, gemini, or chatgpt.'})
+
+    api_key = current_app.config.get('GROQ_API_KEY') or os.environ.get('GROQ_API_KEY')
+    if not api_key:
+        return error_response('GROQ_NOT_CONFIGURED', 503,
+                              {'detail': 'GROQ_API_KEY env var is required.'})
+
+    # ── Pull the current page content from GitHub ────────────────
+    try:
+        page_content, page_sha = gh.get_file(page_path)
+        if page_content is None:
+            return error_response('PAGE_NOT_FOUND', 404,
+                                  {'detail': f'{page_path} is not in the repo.'})
+    except gh.GitHubPublishError as e:
+        return error_response('GITHUB_ERROR', 502,
+                              {'detail': str(e), 'status': e.status})
+
+    # Cap the embedded HTML so Groq doesn't choke. Most PNEC pages are
+    # < 60 KB. We trim to ~150 KB (Groq's context easily handles it,
+    # but we leave room for the meta-prompt + Groq's response).
+    page_bytes = len(page_content)
+    if page_bytes > 150_000:
+        page_content = page_content[:150_000] + '\n<!-- truncated to 150KB for AI context window -->'
+
+    # ── Build the meta-prompt for Groq ───────────────────────────
+    model = current_app.config.get('GROQ_MODEL') or 'llama-3.3-70b-versatile'
+    url = (current_app.config.get('GROQ_API_URL') or 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
+
+    system_prompt = (
+        'You are a senior prompt engineer specializing in generating high-quality '
+        'one-shot prompts for large language models. Your job is to write a prompt '
+        f'that the user can paste DIRECTLY into {profile["label"]}, along with no other '
+        'context, that will instruct it to modify an HTML page from the Poway Neighborhood '
+        'Emergency Corps (PNEC) website according to the user\'s description.\n\n'
+        f'TARGET AI: {profile["label"]}\n'
+        f'TARGET AI FORMAT GUIDANCE: {profile["format_hints"]}\n\n'
+        'YOUR OUTPUT MUST:\n'
+        '1. Be a single self-contained prompt — no preamble like "Here is the prompt:".\n'
+        '2. Include the ENTIRE current HTML document inline (so the user copies once).\n'
+        '3. Explicitly state PNEC brand constraints: forest green (#0e3b21), cream backgrounds (#fbf8f1), DM Sans typography, no emojis as icons, neighborly tone, never alarmist, accessible markup (h1/h2/h3 hierarchy, alt text, ARIA where needed).\n'
+        '4. Instruct the target AI to output ONLY the complete modified HTML document — no commentary, no markdown fences (unless the format guidance above specifies otherwise for this target AI).\n'
+        '5. Be specific about WHERE in the existing HTML the change should land (reference visible markers like h2 text, section IDs, or content anchors from the document below).\n'
+        '6. Tell the target AI to preserve all unchanged content verbatim.\n'
+        '7. Never invent PNEC facts. Real values it can reference: powaynec@gmail.com, 858-668-1250 homebound helpline, 2-1-1 financial aid, 12th Annual Emergency & Safety Fair on May 23 2026 at Old Poway Park 9 AM–1 PM.\n\n'
+        'Do not say anything other than the prompt itself. The very first character of your '
+        'response must be the first character of the prompt the user will paste.'
+    )
+
+    user_payload = (
+        f'PAGE PATH: {page_path}\n\n'
+        f'USER\'S DESCRIPTION OF DESIRED CHANGE:\n'
+        f'"""\n{description}\n"""\n\n'
+        f'CURRENT HTML CONTENT OF THE PAGE:\n'
+        f'"""\n{page_content}\n"""\n\n'
+        f'Generate the prompt now.'
+    )
+
+    try:
+        resp = _requests.post(url, timeout=45, headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+        }, json={
+            'model':       model,
+            'temperature': 0.4,
+            'max_tokens':  4000,
+            'messages': [
+                {'role': 'system', 'content': system_prompt},
+                {'role': 'user',   'content': user_payload},
+            ],
+        })
+        if resp.status_code == 401:
+            return error_response('GROQ_AUTH', 502, {
+                'detail': 'GROQ_API_KEY rejected by Groq — check the key is valid and not revoked.',
+            })
+        if resp.status_code == 429:
+            return error_response('GROQ_RATE_LIMITED', 502, {
+                'detail': 'Groq rate-limit hit. Wait a minute and try again.',
+            })
+        if not resp.ok:
+            return error_response('GROQ_API_ERROR', 502, {
+                'detail': f'Groq returned {resp.status_code}',
+                'body':   (resp.text or '')[:400],
+            })
+
+        try:
+            body = resp.json()
+        except Exception:
+            return error_response('GROQ_BAD_JSON', 502,
+                                  {'detail': 'Groq returned non-JSON.', 'body': (resp.text or '')[:400]})
+        if not isinstance(body, dict):
+            return error_response('GROQ_BAD_SHAPE', 502, {'detail': 'Response not a dict.'})
+        choices = body.get('choices')
+        if not isinstance(choices, list) or not choices:
+            return error_response('GROQ_NO_CHOICES', 502, {'detail': 'No choices in response.'})
+        msg = (choices[0] or {}).get('message') or {}
+        engineered_prompt = msg.get('content')
+        if not isinstance(engineered_prompt, str) or not engineered_prompt.strip():
+            return error_response('GROQ_NO_CONTENT', 502, {'detail': 'Empty content from Groq.'})
+
+        engineered_prompt = engineered_prompt.strip()
+
+        return jsonify({
+            'ok':              True,
+            'prompt':          engineered_prompt,
+            'target_ai':       target_ai,
+            'target_ai_label': profile['label'],
+            'target_ai_url':   profile['url'],
+            'page_path':       page_path,
+            'page_bytes':      page_bytes,
+            'page_sha':        page_sha,
+            'steps':           _build_steps(profile['label'], profile['url']),
+            'model':           body.get('model') or model,
+            'usage':           body.get('usage') or {},
+        }), 200
+    except _requests.exceptions.Timeout:
+        return error_response('GROQ_TIMEOUT', 504,
+                              {'detail': 'Groq did not respond within 45s.'})
+    except _requests.exceptions.ConnectionError:
+        return error_response('GROQ_NETWORK', 502,
+                              {'detail': 'Could not reach Groq.'})
+    except Exception as e:
+        try:
+            current_app.logger.exception('admin.ai_prompt_engineer failed')
+        except Exception:
+            pass
+        return error_response('AI_PROMPT_ENGINEER_ERROR', 502, {'detail': str(e)[:200]})
