@@ -20,6 +20,20 @@ from app.utils.errors import error_response
 admin_publish_bp = Blueprint('admin_publish', __name__)
 
 
+# ─── Defensive type coercion ───────────────────────────────────────
+# 2026-05-13: previously the route used `(data.get('x') or '').strip()`
+# which crashes with `AttributeError: 'dict' object has no attribute
+# 'strip'` if the frontend sends a non-string by mistake. nginx then
+# returns an HTML 500 page that the browser can't parse as JSON, and
+# the user sees a cryptic "Unexpected token '<'" toast instead of a
+# meaningful error. `_as_str` short-circuits that whole class of bug.
+
+def _as_str(v, default=''):
+    """Return v.strip() if v is a string, else the default. Survives
+    None / dict / list / int / anything weird the frontend might send."""
+    return v.strip() if isinstance(v, str) else default
+
+
 # ─── Auth ─────────────────────────────────────────────────────────
 
 def _require_admin():
@@ -747,12 +761,9 @@ def ai_prompt_engineer():
         return error_response('UNAUTHORIZED', 401)
 
     data = request.get_json(silent=True) or {}
-    # Coerce-to-string with a default — if the frontend sends a non-string
-    # (e.g. accidentally a dict from a click-event bug), we treat it as
-    # missing and return INVALID_PATH / INVALID_DESCRIPTION rather than
-    # crashing with a 500 on .strip().
-    def _as_str(v, default=''):
-        return v.strip() if isinstance(v, str) else default
+    # Use the module-level `_as_str` helper — coerces non-string inputs
+    # (e.g. a dict from a click-event serialization bug) to '' / default
+    # so we return INVALID_PATH / INVALID_DESCRIPTION 400 instead of a 500.
     page_path   = _as_str(data.get('path'))
     description = _as_str(data.get('description'))
     target_ai   = _as_str(data.get('target_ai'), 'claude').lower()
