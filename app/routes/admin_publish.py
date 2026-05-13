@@ -626,6 +626,75 @@ def _build_steps(target_label, target_url):
     ]
 
 
+# A literal placeholder Groq inserts into the engineered prompt; the
+# backend swaps this for the full page HTML before returning to the
+# user. This lets us send Groq a SUMMARY (no inline <style>/<script>)
+# while still embedding the FULL HTML in the engineered prompt the
+# user pastes into the target AI — which is what keeps us under
+# Groq's 12000 TPM free-tier limit on long pages.
+PAGE_HTML_PLACEHOLDER = '<<<<FULL_PAGE_HTML>>>>'
+
+
+# ── Page summariser for Groq ─────────────────────────────────────────
+# Strips inline <style>, <script>, <link>, and noisy inline style="..."
+# attributes from the page HTML before sending it to Groq. The target
+# AI receives the FULL untrimmed HTML in the engineered prompt — Groq
+# just needs to see the page STRUCTURE (h1/h2/section landmarks) so it
+# can write a prompt that references the right anchors.
+import re as _re
+
+def _summarize_html_for_groq(html_text, max_bytes=18_000):
+    """Return a (summary_text, was_trimmed) tuple.
+
+    The summary preserves the structural skeleton of the page so Groq
+    can reference real landmarks in the engineered prompt, while
+    stripping the large inline assets that bloat the token count.
+    """
+    summary = html_text
+
+    # 1. Strip <style>...</style> blocks (these can be ~20 KB each on
+    #    PNEC's admin-editor.html). Replace with a placeholder so Groq
+    #    knows there was a stylesheet there.
+    summary = _re.sub(
+        r'<style[^>]*>.*?</style>',
+        '<style>/* … style block omitted from summary … */</style>',
+        summary, flags=_re.DOTALL | _re.IGNORECASE,
+    )
+
+    # 2. Strip <script>...</script> blocks similarly.
+    summary = _re.sub(
+        r'<script[^>]*>.*?</script>',
+        '<script>/* … script block omitted from summary … */</script>',
+        summary, flags=_re.DOTALL | _re.IGNORECASE,
+    )
+
+    # 3. Drop self-closing <link> / <meta> head tags that don't affect
+    #    the visible content the AI is editing.
+    summary = _re.sub(r'<link\b[^>]*>', '', summary, flags=_re.IGNORECASE)
+
+    # 4. Collapse long inline style="..." attributes to keep tag opening
+    #    tags short. We keep the existence of the attribute so Groq
+    #    can tell the target AI to preserve inline styling, but we
+    #    don't ship every rgba() declaration.
+    summary = _re.sub(
+        r'style="[^"]{120,}"',
+        'style="…"',
+        summary,
+    )
+
+    # 5. Collapse runs of blank lines.
+    summary = _re.sub(r'\n{3,}', '\n\n', summary)
+
+    # 6. Truncate to budget. Most PNEC pages summarise to < 15 KB; the
+    #    admin-editor.html test case goes from ~150 KB → ~10 KB.
+    was_trimmed = False
+    if len(summary) > max_bytes:
+        summary = summary[:max_bytes] + '\n<!-- truncated for AI summary; the target AI will see the full untruncated page -->'
+        was_trimmed = True
+
+    return summary, was_trimmed
+
+
 @admin_publish_bp.route('/admin/ai/prompt-engineer', methods=['POST'])
 def ai_prompt_engineer():
     """Meta-prompt-engineer: use Groq to generate a prompt the user can
@@ -689,16 +758,23 @@ def ai_prompt_engineer():
         return error_response('GITHUB_ERROR', 502,
                               {'detail': str(e), 'status': e.status})
 
-    # Cap the embedded HTML so Groq doesn't choke. Most PNEC pages are
-    # < 60 KB. We trim to ~150 KB (Groq's context easily handles it,
-    # but we leave room for the meta-prompt + Groq's response).
+    # Total bytes (used in the response so the UI can show "X KB embedded")
     page_bytes = len(page_content)
-    if page_bytes > 150_000:
-        page_content = page_content[:150_000] + '\n<!-- truncated to 150KB for AI context window -->'
+
+    # Build a SUMMARISED view of the page for Groq (strips inline
+    # <style>/<script>/<link>, collapses long inline style="..." attrs,
+    # caps at ~18 KB). This keeps us under Groq's 12000 TPM free-tier
+    # limit even for the admin-editor page (which is ~150 KB raw).
+    summary_html, was_summary_trimmed = _summarize_html_for_groq(page_content)
 
     # ── Build the meta-prompt for Groq ───────────────────────────
     model = current_app.config.get('GROQ_MODEL') or 'llama-3.3-70b-versatile'
     url = (current_app.config.get('GROQ_API_URL') or 'https://api.groq.com/openai/v1').rstrip('/') + '/chat/completions'
+
+    # The engineered prompt Groq emits will contain the literal token
+    # `{ph}` exactly once — the backend substitutes it for the full
+    # untrimmed page HTML before returning the prompt to the user.
+    ph = PAGE_HTML_PLACEHOLDER
 
     system_prompt = (
         'You are a senior prompt engineer specializing in generating high-quality '
@@ -710,23 +786,37 @@ def ai_prompt_engineer():
         f'TARGET AI FORMAT GUIDANCE: {profile["format_hints"]}\n\n'
         'YOUR OUTPUT MUST:\n'
         '1. Be a single self-contained prompt — no preamble like "Here is the prompt:".\n'
-        '2. Include the ENTIRE current HTML document inline (so the user copies once).\n'
+        f'2. Include the literal string {ph} EXACTLY ONCE inside the prompt, in the place where the target AI should receive the current HTML document. Our backend will substitute this token for the FULL untrimmed page HTML before delivering the prompt to the user. Do not paste the HTML you see below into the prompt — use {ph} instead.\n'
         '3. Explicitly state PNEC brand constraints: forest green (#0e3b21), cream backgrounds (#fbf8f1), DM Sans typography, no emojis as icons, neighborly tone, never alarmist, accessible markup (h1/h2/h3 hierarchy, alt text, ARIA where needed).\n'
         '4. Instruct the target AI to output ONLY the complete modified HTML document — no commentary, no markdown fences (unless the format guidance above specifies otherwise for this target AI).\n'
-        '5. Be specific about WHERE in the existing HTML the change should land (reference visible markers like h2 text, section IDs, or content anchors from the document below).\n'
-        '6. Tell the target AI to preserve all unchanged content verbatim.\n'
+        '5. Be specific about WHERE in the existing HTML the change should land (reference visible markers like h2 text, section IDs, or content anchors from the document summary below).\n'
+        '6. Tell the target AI to preserve all unchanged content verbatim — including the inline <style> and <script> blocks (you only see placeholders for those in the summary, but the full page will be substituted in).\n'
         '7. Never invent PNEC facts. Real values it can reference: powaynec@gmail.com, 858-668-1250 homebound helpline, 2-1-1 financial aid, 12th Annual Emergency & Safety Fair on May 23 2026 at Old Poway Park 9 AM–1 PM.\n\n'
         'Do not say anything other than the prompt itself. The very first character of your '
         'response must be the first character of the prompt the user will paste.'
     )
 
+    summary_note = (
+        '(Note: the inline <style>, <script>, and <link> elements have been '
+        'replaced with placeholders to keep this summary short. The target '
+        'AI will receive the FULL untrimmed page via the substitution token; '
+        'tell it to preserve those omitted blocks verbatim.)'
+        if not was_summary_trimmed else
+        '(Note: the page is large enough that this summary was further '
+        'truncated. The target AI will still receive the FULL untrimmed '
+        f'page via the {ph} token — tell it to preserve everything not '
+        'explicitly being changed.)'
+    )
+
     user_payload = (
-        f'PAGE PATH: {page_path}\n\n'
+        f'PAGE PATH: {page_path}\n'
+        f'PAGE SIZE: {page_bytes} bytes total\n\n'
         f'USER\'S DESCRIPTION OF DESIRED CHANGE:\n'
         f'"""\n{description}\n"""\n\n'
-        f'CURRENT HTML CONTENT OF THE PAGE:\n'
-        f'"""\n{page_content}\n"""\n\n'
-        f'Generate the prompt now.'
+        f'STRUCTURAL SUMMARY OF THE PAGE TO EDIT  {summary_note}\n'
+        f'"""\n{summary_html}\n"""\n\n'
+        f'Generate the prompt now. Remember: use the literal token {ph} '
+        f'where the full HTML should appear — do not embed the summary above.'
     )
 
     try:
@@ -773,18 +863,50 @@ def ai_prompt_engineer():
 
         engineered_prompt = engineered_prompt.strip()
 
+        # ── Substitute the placeholder with the FULL untrimmed HTML ──
+        # Groq may not always honor the placeholder convention (LLMs are
+        # imperfect). We handle three cases:
+        #   1. exactly one placeholder → swap it for the full HTML
+        #   2. multiple placeholders → swap the first one, drop the rest
+        #   3. no placeholder → append the full HTML in a labelled block
+        #      (we still want the user to get a usable prompt)
+        placeholder_count = engineered_prompt.count(PAGE_HTML_PLACEHOLDER)
+        if placeholder_count >= 1:
+            # Replace the first occurrence with full HTML, and drop any extras
+            first_idx = engineered_prompt.find(PAGE_HTML_PLACEHOLDER)
+            engineered_prompt = (
+                engineered_prompt[:first_idx]
+                + page_content
+                + engineered_prompt[first_idx + len(PAGE_HTML_PLACEHOLDER):]
+            )
+            # Strip any duplicate placeholders that Groq might have left
+            engineered_prompt = engineered_prompt.replace(PAGE_HTML_PLACEHOLDER, '')
+            placeholder_handling = 'substituted' if placeholder_count == 1 else 'substituted-first-deduped-rest'
+        else:
+            # Groq forgot the placeholder — append the HTML at the end so
+            # the user's paste still works.
+            engineered_prompt = (
+                engineered_prompt.rstrip()
+                + '\n\n--- CURRENT PAGE HTML (preserve everything you do not change) ---\n\n'
+                + page_content
+            )
+            placeholder_handling = 'appended'
+
         return jsonify({
-            'ok':              True,
-            'prompt':          engineered_prompt,
-            'target_ai':       target_ai,
-            'target_ai_label': profile['label'],
-            'target_ai_url':   profile['url'],
-            'page_path':       page_path,
-            'page_bytes':      page_bytes,
-            'page_sha':        page_sha,
-            'steps':           _build_steps(profile['label'], profile['url']),
-            'model':           body.get('model') or model,
-            'usage':           body.get('usage') or {},
+            'ok':                  True,
+            'prompt':              engineered_prompt,
+            'target_ai':           target_ai,
+            'target_ai_label':     profile['label'],
+            'target_ai_url':       profile['url'],
+            'page_path':           page_path,
+            'page_bytes':          page_bytes,
+            'page_sha':            page_sha,
+            'summary_bytes':       len(summary_html),
+            'summary_trimmed':     was_summary_trimmed,
+            'placeholder_handled': placeholder_handling,
+            'steps':               _build_steps(profile['label'], profile['url']),
+            'model':               body.get('model') or model,
+            'usage':               body.get('usage') or {},
         }), 200
     except _requests.exceptions.Timeout:
         return error_response('GROQ_TIMEOUT', 504,
