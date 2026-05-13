@@ -13,6 +13,18 @@
 # Required env:
 #   PNEC_ADMIN_KEY  — defaults to the production key
 #
+# IMPORTANT LIMITATION:
+#   This script only tests the BACKEND. It sends clean string-typed
+#   JSON via curl, so it does NOT catch frontend handler bugs (e.g.
+#   passing a click Event as a function arg that gets serialized as
+#   {"isTrusted":true} and crashes .strip() on the server side).
+#   For frontend coverage, drive the admin-editor in a real browser:
+#     1. Open https://whitelunarium.github.io/Beasts_FrontEnd/pages/admin-editor.html
+#     2. Sign in with the admin key
+#     3. Click ✨ Prompt engineer with AI
+#     4. Fill the form and click Engineer prompt
+#     5. Verify the result panel renders, not a "Unexpected token '<'" toast
+#
 set -e
 
 ADMIN_KEY="${PNEC_ADMIN_KEY:-VUL5xq9Pue3s64cNHSACYdeXKvb3}"
