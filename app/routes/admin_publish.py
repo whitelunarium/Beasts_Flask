@@ -628,15 +628,19 @@ _TARGET_AI_PROFILES = {
 
 
 def _build_steps(target_label, target_url):
-    """Step-by-step instructions shown beside the engineered prompt."""
+    """Step-by-step instructions shown beside the engineered prompt.
+
+    Worded generically (no target-name repetition) so the same steps
+    read sensibly even when the admin changes the target AI radio
+    after the prompt has been generated. The "Copy & open <target>"
+    button + the result-title carry the target-specific info.
+    """
     return [
-        f'Open {target_label} in a new tab: {target_url}',
-        'Copy the engineered prompt below (the "Copy" button does the right thing).',
-        f'Paste the prompt into {target_label}. The prompt already contains the current page HTML.',
-        f'Wait for {target_label} to return the modified HTML.',
-        'Copy the entire response from the AI (just the HTML, no extra commentary).',
-        'Paste it back into the editor here, REPLACING the existing content.',
-        'Click "Preview" to verify, then "Save" to publish.',
+        'Open the AI in a new tab — use the "Copy & open" button above to copy the prompt and open the AI in one click.',
+        'Paste the prompt into the AI. It already contains the current page HTML, so one paste does it.',
+        'Wait for the AI to return the modified HTML, then copy its full response (just the HTML, no extra commentary).',
+        'Use the "Step 2 · Paste the AI\'s response & apply" panel below to paste it back, preview it inline, and apply to the editor.',
+        'Once the editor source is replaced, click "Publish to GitHub →" to commit. The live site rebuilds automatically.',
     ]
 
 
