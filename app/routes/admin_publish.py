@@ -925,21 +925,40 @@ def ai_prompt_engineer():
             )
             placeholder_handling = 'appended'
 
+        # Cap the included summary at 4 KB so the response stays small
+        # (the user only needs to skim the structure Groq saw, not all
+        # 18 KB of it). For larger summaries we send a head + tail
+        # snippet so the user can confirm key landmarks are present.
+        if len(summary_html) <= 4000:
+            summary_preview = summary_html
+            summary_preview_truncated = False
+        else:
+            head_chunk = summary_html[:2400]
+            tail_chunk = summary_html[-1200:]
+            summary_preview = (
+                head_chunk
+                + f'\n\n<!-- … (omitted ~{len(summary_html) - 3600} chars from middle of summary) … -->\n\n'
+                + tail_chunk
+            )
+            summary_preview_truncated = True
+
         return jsonify({
-            'ok':                  True,
-            'prompt':              engineered_prompt,
-            'target_ai':           target_ai,
-            'target_ai_label':     profile['label'],
-            'target_ai_url':       profile['url'],
-            'page_path':           page_path,
-            'page_bytes':          page_bytes,
-            'page_sha':            page_sha,
-            'summary_bytes':       len(summary_html),
-            'summary_trimmed':     was_summary_trimmed,
-            'placeholder_handled': placeholder_handling,
-            'steps':               _build_steps(profile['label'], profile['url']),
-            'model':               body.get('model') or model,
-            'usage':               body.get('usage') or {},
+            'ok':                       True,
+            'prompt':                   engineered_prompt,
+            'target_ai':                target_ai,
+            'target_ai_label':          profile['label'],
+            'target_ai_url':            profile['url'],
+            'page_path':                page_path,
+            'page_bytes':               page_bytes,
+            'page_sha':                 page_sha,
+            'summary_bytes':            len(summary_html),
+            'summary_trimmed':          was_summary_trimmed,
+            'summary_preview':          summary_preview,
+            'summary_preview_truncated': summary_preview_truncated,
+            'placeholder_handled':      placeholder_handling,
+            'steps':                    _build_steps(profile['label'], profile['url']),
+            'model':                    body.get('model') or model,
+            'usage':                    body.get('usage') or {},
         }), 200
     except _requests.exceptions.Timeout:
         return error_response('GROQ_TIMEOUT', 504,
